@@ -35,7 +35,7 @@ export function mapBilibiliEvent(
         uid: String(u?.[0] ?? ''),
         nickname: String(u?.[1] ?? '未知用户'),
         avatar: u?.[2] ? String(u[2]) : undefined,
-        guardLevel: Number(medal?.[1] ?? 0) || undefined
+        medalLevel: Number(medal?.[1] ?? 0) || undefined
       },
       content
     }
@@ -53,7 +53,7 @@ export function mapBilibiliEvent(
         content: ''
       }
     case 'SEND_GIFT': {
-      const price = Number(data['price'] ?? 0) // 单位：分（0.01 元），与测试规格一致
+      const price = Number(data['price'] ?? 0) // 单位：金瓜子（1 元 = 1000 瓜子）
       return {
         ...base,
         id: makeId(roomId, String(data['uid'] ?? ''), 'gift'),
@@ -67,7 +67,7 @@ export function mapBilibiliEvent(
         gift: {
           name: String(data['giftName'] ?? ''),
           count: Number(data['num'] ?? 1),
-          price: price / 100
+          price: price / 1000
         }
       }
     }
@@ -78,7 +78,7 @@ export function mapBilibiliEvent(
         type: 'gift',
         user: { uid: String(data['uid'] ?? ''), nickname: String(data['username'] ?? '') },
         content: '',
-        gift: { name: String(data['gift_name'] ?? '舰长'), count: Number(data['num'] ?? 1), price: 0 }
+        gift: { name: String(data['gift_name'] ?? '舰长'), count: Number(data['num'] ?? 1), price: Number(data['price'] ?? 0) / 1000 }
       }
     case 'WATCHED_CHANGE':
       return {

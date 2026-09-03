@@ -7,10 +7,11 @@ export interface DanmakuUser {
   uid: string
   nickname: string
   avatar?: string
-  guardLevel?: number
+  /** 粉丝勋章等级（非舰长守卫等级） */
+  medalLevel?: number
 }
 
-export interface GiftInfo { name: string; count: number; price: number }
+export interface GiftInfo { name: string; count: number; /** 单价，单位：元 */ price: number }
 
 export interface DanmakuMessage {
   id: string

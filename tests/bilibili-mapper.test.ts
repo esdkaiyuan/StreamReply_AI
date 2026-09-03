@@ -20,7 +20,7 @@ describe('bilibili mapper', () => {
     expect(msg!.user.uid).toBe('12345')
     expect(msg!.user.nickname).toBe('小明')
     expect(msg!.user.avatar).toBe('https://i0.hdslb.com/a.jpg')
-    expect(msg!.user.guardLevel).toBe(21)
+    expect(msg!.user.medalLevel).toBe(21)
     expect(msg!.source).toBe('ws')
   })
 
@@ -43,7 +43,7 @@ describe('bilibili mapper', () => {
       'ws'
     ) as DanmakuMessage | null
     expect(msg!.type).toBe('gift')
-    expect(msg!.gift).toEqual({ name: '小花花', count: 10, price: 1 })
+    expect(msg!.gift).toEqual({ name: '小花花', count: 10, price: 0.1 })
   })
 
   it('WATCHED_CHANGE 返回 RoomStatEvent', () => {

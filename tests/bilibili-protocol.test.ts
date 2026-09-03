@@ -40,4 +40,20 @@ describe('bilibili protocol', () => {
     const truncated = Buffer.concat([frame, Buffer.from([0, 0])])
     expect(splitPackets(truncated)).toHaveLength(1)
   })
+
+  it('protover=3 携带非法 brotli 数据时安全返回空数组', () => {
+    const frame = buildPacket(OP.MESSAGE, 3, Buffer.from('not-brotli-data'))
+    expect(decodeBody(splitPackets(frame)[0])).toEqual([])
+  })
+
+  it('headerLen 异常（>packetLen 或 <16）的帧被安全忽略', () => {
+    // 手工构造 headerLen=65535 的帧
+    const head = Buffer.alloc(16)
+    head.writeUInt32BE(16, 0)
+    head.writeUInt16BE(65535, 4)
+    head.writeUInt16BE(0, 6)
+    head.writeUInt32BE(5, 8)
+    const evil = Buffer.concat([head])
+    expect(splitPackets(evil)).toEqual([])
+  })
 })
