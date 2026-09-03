@@ -137,7 +137,7 @@ function ensureIpcRoutes(): void {
   ipcMain.on(IPC.wvInjectReady, () => { /* hook 安装确认，无需处理 */ })
   ipcMain.on(IPC.wvDomReady, (e) => {
     const room = roomBySender(e.sender)
-    if (room) setStatus(room, 'fallback-dom') // 容器真正找到并开始观察时才置兜底态
+    if (room && room.domMode) setStatus(room, 'fallback-dom') // 仅兜底模式下接受，防 WS 接管后状态回跳
   })
   ipcMain.on(IPC.wvWsMeta, (e, url: string) => {
     const room = roomBySender(e.sender)
