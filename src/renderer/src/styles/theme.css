@@ -1,1 +1,65 @@
-/* 占位：Task 3 将替换为卡通磨砂主题设计令牌 */
+:root {
+  /* 卡通糖果渐变背景 */
+  --bg-gradient: linear-gradient(135deg, #ffd6e8 0%, #e7d9ff 45%, #bfe3ff 100%);
+  /* 磨砂玻璃 */
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-blur: blur(24px) saturate(1.6);
+  /* 漫画描边与硬阴影（小圆角直边） */
+  --ink: #2b2b3a;
+  --border-bold: 2px solid var(--ink);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --shadow-hard: 4px 4px 0 rgba(43, 43, 58, 0.9);
+  /* 类型着色 */
+  --c-chat: rgba(255, 255, 255, 0.72);
+  --c-ask: #d8f7e8;
+  --c-gift: #ffe9a8;
+  --c-enter: #ece2ff;
+  --accent: #ff7eb3;
+  --accent-2: #7ec8ff;
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Nunito', 'Segoe UI', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #app { height: 100%; }
+
+body {
+  background: var(--bg-gradient) fixed;
+  color: var(--ink);
+  overflow: hidden;
+}
+
+/* 磨砂玻璃卡片：粗描边 + 硬阴影 */
+.glass-card {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--border-bold);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-hard);
+}
+
+.btn-cartoon {
+  font: inherit;
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #fff;
+  border: var(--border-bold);
+  border-radius: var(--radius-sm);
+  box-shadow: 3px 3px 0 rgba(43, 43, 58, 0.9);
+  cursor: pointer;
+  transition: transform 0.08s ease;
+}
+.btn-cartoon:hover { transform: translate(-1px, -1px); }
+.btn-cartoon:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 rgba(43, 43, 58, 0.9); }
+.btn-cartoon:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.input-cartoon {
+  font: inherit;
+  padding: 6px 10px;
+  border: var(--border-bold);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.75);
+  outline: none;
+}
+.input-cartoon:focus { border-color: var(--accent); }
