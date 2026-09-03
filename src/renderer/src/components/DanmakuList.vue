@@ -7,8 +7,9 @@ const store = useDanmakuStore()
 const scroller = ref<HTMLElement | null>(null)
 const autoScroll = ref(true)
 
+// 监听最后一条 id 而非 length：缓冲满 200 条后 length 恒定，新弹幕仍需滚动
 watch(
-  () => store.items.length,
+  () => store.items[store.items.length - 1]?.id,
   async () => {
     if (!autoScroll.value) return
     await nextTick()

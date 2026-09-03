@@ -1,12 +1,8 @@
 import { defineStore } from 'pinia'
-import type { RoomInfo, RoomStatEvent } from '../../../shared/types'
+import type { RoomInfo } from '../../../shared/types'
 
 export const useRoomStore = defineStore('rooms', {
-  state: () => ({
-    rooms: [] as RoomInfo[],
-    rates: {} as Record<string, number>,
-    online: {} as Record<string, number | undefined>
-  }),
+  state: () => ({ rooms: [] as RoomInfo[] }),
   actions: {
     async refresh() { this.rooms = await window.lda.listRooms() },
     async add(input: string) {
@@ -22,10 +18,6 @@ export const useRoomStore = defineStore('rooms', {
       const i = this.rooms.findIndex((x) => x.roomId === r.roomId)
       if (i >= 0) this.rooms[i] = r
       else this.rooms.push(r)
-    },
-    applyStat(s: RoomStatEvent) {
-      this.rates[s.roomId] = s.danmakuRate
-      this.online[s.roomId] = s.onlineCount
     }
   }
 })

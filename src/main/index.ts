@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
-import { registerRoomIpc } from './rooms/ipc'
+import { registerRoomIpc, rebindRoomWindow } from './rooms/ipc'
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -17,6 +17,8 @@ function createWindow(): BrowserWindow {
 app.whenReady().then(() => {
   const win = createWindow()
   registerRoomIpc(win)
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) rebindRoomWindow(createWindow())
+  })
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

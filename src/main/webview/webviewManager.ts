@@ -25,6 +25,7 @@ const PLATFORM_URL: Record<Platform, (id: string) => string> = {
 
 const rooms = new Map<string, RoomSession>()
 let mainWindow: BrowserWindow | null = null
+let domSeq = 0
 
 export function bindMainWindow(win: BrowserWindow): void {
   mainWindow = win
@@ -157,7 +158,7 @@ function ensureIpcRoutes(): void {
     if (!room || !room.domMode) return // WS 已接管后到达的 DOM 批次丢弃，防双源重复弹幕
     for (const m of messages) {
       bus.publish({
-        id: `bili:${room.info.roomId}:${Date.now()}:${Math.abs(hash(m.content))}`,
+        id: `bili:${room.info.roomId}:${Date.now()}:${Math.abs(hash(m.content))}:${domSeq++}`,
         platform: 'bilibili',
         roomId: room.info.roomId,
         type: 'chat',

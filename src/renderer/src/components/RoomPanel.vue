@@ -25,7 +25,6 @@ async function add(): Promise<void> {
 onMounted(() => {
   void store.refresh()
   window.lda.onRoomStatus((r) => store.applyStatus(r))
-  window.lda.onRoomStat((s) => store.applyStat(s))
 })
 </script>
 

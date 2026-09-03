@@ -13,7 +13,6 @@ const online = ref<number | undefined>(undefined)
 onMounted(() => {
   window.lda.onDanmaku((m) => danmaku.push(m))
   window.lda.onRoomStat((s) => {
-    rooms.applyStat(s)
     rate.value = s.danmakuRate
     if (s.onlineCount) online.value = s.onlineCount
   })
