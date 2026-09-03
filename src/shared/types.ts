@@ -50,6 +50,8 @@ export const IPC = {
   wvFrame: 'wv:frame',
   wvWsMeta: 'wv:ws-meta',
   wvInjectReady: 'wv:inject-ready',
+  wvDomReady: 'wv:dom-ready',
+  wvDomMessages: 'wv:dom-messages',
   wvSendText: 'wv:send-text'
 } as const
 

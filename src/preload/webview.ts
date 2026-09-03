@@ -3,6 +3,7 @@ import { IPC } from '../shared/types'
 
 // 主世界 → preload → 主进程（弹幕帧 / WS 元信息 / 注入就绪 / DOM 兜底消息）
 window.addEventListener('message', (ev) => {
+  if (ev.source !== window) return // 仅接受本 frame 注入脚本的消息，隔离页面内 iframe/第三方脚本
   const d = ev.data as {
     __LDA__?: string
     buf?: ArrayBuffer
@@ -11,13 +12,16 @@ window.addEventListener('message', (ev) => {
   } | null
   if (!d || typeof d !== 'object' || !d.__LDA__) return
   if (d.__LDA__ === 'ws-frame' && d.buf instanceof ArrayBuffer) {
+    if (d.buf.byteLength > 1024 * 1024) return // 单帧上限 1MB（B站帧为 KB 级），防海量字节涌入 IPC
     ipcRenderer.send(IPC.wvFrame, new Uint8Array(d.buf))
   } else if (d.__LDA__ === 'ws-meta') {
     ipcRenderer.send(IPC.wvWsMeta, d.url ?? '')
   } else if (d.__LDA__ === 'ws-hook-installed') {
     ipcRenderer.send(IPC.wvInjectReady)
+  } else if (d.__LDA__ === 'dom-ready') {
+    ipcRenderer.send(IPC.wvDomReady)
   } else if (d.__LDA__ === 'dom-messages' && Array.isArray(d.messages)) {
-    ipcRenderer.send('wv:dom-messages', d.messages)
+    ipcRenderer.send(IPC.wvDomMessages, d.messages)
   }
 })
 

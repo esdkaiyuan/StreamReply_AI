@@ -1,9 +1,8 @@
 import { WebContentsView, ipcMain, BrowserWindow } from 'electron'
 import { join } from 'path'
-import { brotliDecompressSync } from 'zlib'
-import type { DanmakuMessage, Platform, RoomInfo, RoomStatus } from '../../shared/types'
+import type { DanmakuMessage, Platform, RoomInfo, RoomStatus, RoomStatEvent } from '../../shared/types'
 import { IPC } from '../../shared/types'
-import { OP, splitPackets } from '../adapters/bilibili/protocol'
+import { OP, splitPackets, decodeBody } from '../adapters/bilibili/protocol'
 import { mapBilibiliEvent } from '../adapters/bilibili/mapper'
 import { WS_HOOK_SCRIPT } from './inject/wsHook'
 import { DOM_OBSERVER_SCRIPT } from './inject/domObserver'
@@ -41,20 +40,17 @@ function handleFrame(room: RoomSession, data: Uint8Array): void {
   try {
     for (const packet of splitPackets(buf)) {
       if (packet.op !== OP.MESSAGE) continue // 认证/心跳由页面自身处理
-      let bodies: Buffer[]
-      if (packet.protover === 3) {
-        bodies = splitPackets(brotliDecompressSync(packet.body)).map((p) => p.body)
-      } else if (packet.protover === 0) {
-        bodies = [packet.body]
-      } else continue
-      for (const body of bodies) {
+      // decodeBody：protover 3 brotli 解压（8MB 上限+坏帧安全丢弃）/0 原样，与协议层单一实现
+      for (const body of decodeBody(packet)) {
         let event: Record<string, unknown>
         try { event = JSON.parse(body.toString('utf8')) } catch { continue }
         const cmd = String(event['cmd'] ?? '')
         const mapped = mapBilibiliEvent(cmd, event, room.info.roomId, room.domMode ? 'dom' : 'ws')
         if (mapped && 'type' in mapped) bus.publish(mapped as DanmakuMessage)
         else if (mapped) {
-          mainWindow?.webContents.send(IPC.roomStat, mapped)
+          // 用本地总线速率覆盖 mapper 的占位值（danmakuRate: -1）
+          const stat = mapped as RoomStatEvent
+          mainWindow?.webContents.send(IPC.roomStat, bus.buildStat(room.info.platform, room.info.roomId, stat.onlineCount))
         }
       }
     }
@@ -66,8 +62,10 @@ function handleFrame(room: RoomSession, data: Uint8Array): void {
 function startDomFallback(room: RoomSession): void {
   if (room.domMode) return
   room.domMode = true
-  void room.view.webContents.executeJavaScript(DOM_OBSERVER_SCRIPT).then(() => {
-    setStatus(room, 'fallback-dom')
+  // 注入成功≠容器就绪：'fallback-dom' 改由 dom-ready 信号（容器真正找到并开始观察）置位
+  void room.view.webContents.executeJavaScript(DOM_OBSERVER_SCRIPT).catch((err) => {
+    console.error('[wv] dom fallback inject failed', err)
+    setStatus(room, 'error')
   })
 }
 
@@ -78,7 +76,7 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
       preload: join(__dirname, '../preload/webview.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   })
   const session: RoomSession = {
@@ -119,6 +117,9 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
     setStatus(session, 'error')
   })
 
+  // 直播间页面弹新窗一律拒绝
+  view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+
   ensureIpcRoutes()
 
   armWatchdog()
@@ -134,10 +135,15 @@ function ensureIpcRoutes(): void {
     Array.from(rooms.values()).find((r) => r.view.webContents === sender)
 
   ipcMain.on(IPC.wvInjectReady, () => { /* hook 安装确认，无需处理 */ })
+  ipcMain.on(IPC.wvDomReady, (e) => {
+    const room = roomBySender(e.sender)
+    if (room) setStatus(room, 'fallback-dom') // 容器真正找到并开始观察时才置兜底态
+  })
   ipcMain.on(IPC.wvWsMeta, (e, url: string) => {
     const room = roomBySender(e.sender)
     if (!room) return
     room.gotWsMeta = true
+    room.domMode = false // WS 连上后退出 DOM 兜底：帧 source 恢复 'ws'，迟到的 DOM 批次被守卫丢弃
     clearTimeout(room.watchdog)
     setStatus(room, 'connected')
     console.log('[wv] danmaku ws:', url)
@@ -146,9 +152,9 @@ function ensureIpcRoutes(): void {
     const room = roomBySender(e.sender)
     if (room) handleFrame(room, data)
   })
-  ipcMain.on('wv:dom-messages', (e, messages: Array<{ nickname: string; content: string }>) => {
+  ipcMain.on(IPC.wvDomMessages, (e, messages: Array<{ nickname: string; content: string }>) => {
     const room = roomBySender(e.sender)
-    if (!room) return
+    if (!room || !room.domMode) return // WS 已接管后到达的 DOM 批次丢弃，防双源重复弹幕
     for (const m of messages) {
       bus.publish({
         id: `bili:${room.info.roomId}:${Date.now()}:${Math.abs(hash(m.content))}`,
