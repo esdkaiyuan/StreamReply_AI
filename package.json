@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "description": "直播弹幕助手：多平台弹幕捕获与AI回复",
   "main": "./out/main/index.js",
+  "engines": { "node": ">=20.19" },
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && vue-tsc --noEmit -p tsconfig.web.json"
   },
   "devDependencies": {

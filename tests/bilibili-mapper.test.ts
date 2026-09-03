@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { DanmakuMessage } from '../src/shared/types'
 import { mapBilibiliEvent } from '../src/main/adapters/bilibili/mapper'
 
 describe('bilibili mapper', () => {
@@ -12,7 +13,7 @@ describe('bilibili mapper', () => {
       ],
       '10086',
       'ws'
-    )
+    ) as DanmakuMessage | null
     expect(msg).not.toBeNull()
     expect(msg!.type).toBe('chat')
     expect(msg!.content).toBe('主播好呀')
@@ -29,7 +30,7 @@ describe('bilibili mapper', () => {
       { data: { uid: 7, uname: '路过的小王', fans_medal: { target_id: 0 } } },
       '10086',
       'ws'
-    )
+    ) as DanmakuMessage | null
     expect(msg!.type).toBe('enter')
     expect(msg!.user.nickname).toBe('路过的小王')
   })
@@ -40,7 +41,7 @@ describe('bilibili mapper', () => {
       { data: { uid: 8, uname: '土豪哥', giftName: '小花花', num: 10, price: 100, face: '' } },
       '10086',
       'ws'
-    )
+    ) as DanmakuMessage | null
     expect(msg!.type).toBe('gift')
     expect(msg!.gift).toEqual({ name: '小花花', count: 10, price: 1 })
   })

@@ -51,3 +51,5 @@ export const IPC = {
   wvInjectReady: 'wv:inject-ready',
   wvSendText: 'wv:send-text'
 } as const
+
+export interface AddRoomResult { ok: boolean; error?: string }

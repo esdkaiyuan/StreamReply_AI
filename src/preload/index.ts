@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DanmakuMessage, RoomInfo, RoomStatEvent } from '../shared/types'
+import type { AddRoomResult, DanmakuMessage, RoomInfo, RoomStatEvent } from '../shared/types'
 import { IPC } from '../shared/types'
 
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -9,7 +9,7 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api = {
-  addRoom: (input: string): Promise<{ ok: boolean; error?: string }> =>
+  addRoom: (input: string): Promise<AddRoomResult> =>
     ipcRenderer.invoke(IPC.roomAdd, input),
   removeRoom: (roomId: string): Promise<void> => ipcRenderer.invoke(IPC.roomRemove, roomId),
   listRooms: (): Promise<RoomInfo[]> => ipcRenderer.invoke(IPC.roomList),
