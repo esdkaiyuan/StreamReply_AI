@@ -1,0 +1,22 @@
+# 依赖与构建产物
+node_modules/
+dist/
+out/
+release/
+
+# 私有配置（含 API Key，严禁入库）
+.env
+.env.local
+*.local
+
+# 日志与运行时数据
+logs/
+*.log
+*.db
+*.sqlite
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
