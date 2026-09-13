@@ -1,6 +1,8 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { registerRoomIpc, rebindRoomWindow } from './rooms/ipc'
+import { loadSettings } from './settings'
+import { startReplyPipeline, rebindReplyWindow } from './ai/pipeline'
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -17,8 +19,13 @@ function createWindow(): BrowserWindow {
 app.whenReady().then(() => {
   const win = createWindow()
   registerRoomIpc(win)
+  startReplyPipeline(win, loadSettings())
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) rebindRoomWindow(createWindow())
+    if (BrowserWindow.getAllWindows().length === 0) {
+      const next = createWindow()
+      rebindRoomWindow(next)
+      rebindReplyWindow(next)
+    }
   })
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

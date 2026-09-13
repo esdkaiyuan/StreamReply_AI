@@ -7,6 +7,11 @@ export class ReplyFilter {
 
   constructor(private sensitiveWords: string[]) {}
 
+  /** 设置抽屉改词后即时生效，不丢失已积累的去重记录 */
+  setSensitiveWords(words: string[]): void {
+    this.sensitiveWords = words
+  }
+
   /** 通过时即占位登记，避免同一文本在窗口内被重复放行 */
   passesText(text: string, now = Date.now()): boolean {
     if (this.sensitiveWords.some((w) => w.trim() && text.includes(w.trim()))) return false

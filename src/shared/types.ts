@@ -81,6 +81,21 @@ export interface ReplyTask {
   sentAt?: number
 }
 
+/** 设置项：主进程持久化，渲染进程经 IPC 读写，故定义在共享层 */
+export interface AppSettings {
+  glmBaseUrl: string
+  glmModel: string
+  glmApiKey: string
+  persona: string
+  triggerMode: TriggerMode
+  keywords: string[]
+  sensitiveWords: string[]
+  requireConfirm: boolean
+  maxPerMinute: number
+  maxPerHour: number
+  aiEnabled: boolean
+}
+
 export interface ReplySnapshot {
   queue: ReplyTask[]
   history: ReplyTask[]
