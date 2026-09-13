@@ -52,7 +52,38 @@ export const IPC = {
   wvInjectReady: 'wv:inject-ready',
   wvDomReady: 'wv:dom-ready',
   wvDomMessages: 'wv:dom-messages',
-  wvSendText: 'wv:send-text'
+  wvSendText: 'wv:send-text',
+  replyUpdate: 'reply:update',
+  replyConfirm: 'reply:confirm',
+  replyReject: 'reply:reject',
+  replyRetry: 'reply:retry',
+  aiToggle: 'ai:toggle',
+  settingsGet: 'settings:get',
+  settingsSet: 'settings:set'
 } as const
 
 export interface AddRoomResult { ok: boolean; error?: string }
+
+export type Emotion = 'answer' | 'thanks' | 'greet' | 'tease' | 'comfort'
+export type ReplyStatus = 'pending-confirm' | 'queued' | 'sending' | 'sent' | 'failed' | 'rejected'
+export type TriggerMode = 'smart' | 'keyword' | 'question' | 'all'
+
+export interface ReplyTask {
+  id: string
+  roomId: string
+  replyTo: string
+  text: string
+  emotion: Emotion
+  priority: 'high' | 'normal' | 'low'
+  status: ReplyStatus
+  reason?: string
+  createdAt: number
+  sentAt?: number
+}
+
+export interface ReplySnapshot {
+  queue: ReplyTask[]
+  history: ReplyTask[]
+  sentLastMinute: number
+  sentLastHour: number
+}
