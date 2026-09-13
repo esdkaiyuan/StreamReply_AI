@@ -1,0 +1,16 @@
+appId: com.aesdnew.live-danmaku-assistant
+productName: 直播弹幕助手
+directories:
+  output: release/${version}
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - '**/*.node'
+win:
+  target: nsis
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always

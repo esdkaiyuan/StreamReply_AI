@@ -3,7 +3,7 @@ import { join } from 'path'
 import { registerRoomIpc, rebindRoomWindow } from './rooms/ipc'
 import { loadSettings } from './settings'
 import { startReplyPipeline, rebindReplyWindow } from './ai/pipeline'
-import { DbStore } from './db/store'
+import type { DbStore } from './db/store'
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -17,20 +17,24 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-/** 原生模块未针对 Electron ABI 重建时降级为「不落盘」，不影响主链路 */
-function openDb(): DbStore | null {
+/**
+ * 动态 import：better-sqlite3 是原生模块，未针对当前 Electron ABI 重建时
+ * require 会直接抛错，静态导入会带崩整个主进程，故隔离并降级为「不落盘」。
+ */
+async function openDb(): Promise<DbStore | null> {
   try {
-    return new DbStore(join(app.getPath('userData'), 'danmaku.db'))
+    const mod = await import('./db/store')
+    return new mod.DbStore(join(app.getPath('userData'), 'danmaku.db'))
   } catch (err) {
-    console.warn('[db] 初始化失败，历史留档已禁用：', err)
+    console.warn('[db] 原生模块不可用，历史留档已禁用：', err)
     return null
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const win = createWindow()
   registerRoomIpc(win)
-  const db = openDb()
+  const db = await openDb()
   startReplyPipeline(win, loadSettings(), db)
   app.on('will-quit', () => db?.close())
   app.on('activate', () => {
