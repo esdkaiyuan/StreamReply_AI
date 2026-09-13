@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "description": "直播弹幕助手：多平台弹幕捕获与AI回复",
   "main": "./out/main/index.js",
-  "engines": { "node": ">=20.19" },
+  "engines": {
+    "node": ">=20.19"
+  },
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",
@@ -21,6 +23,7 @@
     "vue-tsc": "^2.2.10"
   },
   "dependencies": {
+    "electron-store": "^8.2.0",
     "pinia": "^3.0.3",
     "vue": "^3.5.17",
     "zod": "^3.25.67"
