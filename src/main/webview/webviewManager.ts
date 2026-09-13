@@ -6,6 +6,7 @@ import { OP, splitPackets, decodeBody } from '../adapters/bilibili/protocol'
 import { mapBilibiliEvent } from '../adapters/bilibili/mapper'
 import { WS_HOOK_SCRIPT } from './inject/wsHook'
 import { DOM_OBSERVER_SCRIPT } from './inject/domObserver'
+import { buildSendScript } from './inject/sender'
 import { bus } from './bus'
 
 interface RoomSession {
@@ -189,4 +190,17 @@ export function closeRoom(roomId: string): void {
 
 export function listRooms(): RoomInfo[] {
   return Array.from(rooms.values()).map((r) => ({ ...r.info }))
+}
+
+/** 向指定房间发送弹幕；找不到输入框视为失败（触发调度器熔断计数） */
+export async function sendText(roomId: string, text: string): Promise<boolean> {
+  const room = rooms.get(roomId)
+  if (!room) return false
+  try {
+    const result = (await room.view.webContents.executeJavaScript(buildSendScript(text))) as string
+    return result === 'queued'
+  } catch (err) {
+    console.error('[wv] sendText failed', err)
+    return false
+  }
 }
