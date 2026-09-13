@@ -3,10 +3,12 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
 export default defineConfig({
-  main: { plugins: [externalizeDepsPlugin()] },
+  // 关闭自动清空：out/ 下历史 chunk 累积后，批量删除会被安全策略拦截导致构建中断
+  main: { plugins: [externalizeDepsPlugin()], build: { emptyOutDir: false } },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {
+      emptyOutDir: false,
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/preload/index.ts'),
@@ -15,5 +17,5 @@ export default defineConfig({
       }
     }
   },
-  renderer: { plugins: [vue()] }
+  renderer: { plugins: [vue()], build: { emptyOutDir: false } }
 })

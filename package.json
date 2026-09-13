@@ -15,11 +15,6 @@
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "dist": "electron-vite build && electron-builder --win nsis"
   },
-  "build": {
-    "electronDownload": {
-      "mirror": "https://npmmirror.com/mirrors/electron/"
-    }
-  },
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",
     "@types/better-sqlite3": "^9.6.0",
