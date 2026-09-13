@@ -8,7 +8,7 @@ export interface SchedulerOptions {
   maxPerMinute: number
   maxPerHour: number
   requireConfirm: boolean
-  sender: (text: string, roomId: string) => Promise<boolean>
+  sender: (task: SendTask) => Promise<boolean>
   onEvent?: (tasks: SendTask[]) => void
 }
 
@@ -126,7 +126,7 @@ export class SendScheduler {
     this.emit()
     let ok = false
     try {
-      ok = await this.opts.sender(task.text, task.roomId)
+      ok = await this.opts.sender(task)
     } catch {
       ok = false
     }

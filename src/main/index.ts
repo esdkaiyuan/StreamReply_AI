@@ -3,6 +3,7 @@ import { join } from 'path'
 import { registerRoomIpc, rebindRoomWindow } from './rooms/ipc'
 import { loadSettings } from './settings'
 import { startReplyPipeline, rebindReplyWindow } from './ai/pipeline'
+import { DbStore } from './db/store'
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -16,10 +17,22 @@ function createWindow(): BrowserWindow {
   return win
 }
 
+/** 原生模块未针对 Electron ABI 重建时降级为「不落盘」，不影响主链路 */
+function openDb(): DbStore | null {
+  try {
+    return new DbStore(join(app.getPath('userData'), 'danmaku.db'))
+  } catch (err) {
+    console.warn('[db] 初始化失败，历史留档已禁用：', err)
+    return null
+  }
+}
+
 app.whenReady().then(() => {
   const win = createWindow()
   registerRoomIpc(win)
-  startReplyPipeline(win, loadSettings())
+  const db = openDb()
+  startReplyPipeline(win, loadSettings(), db)
+  app.on('will-quit', () => db?.close())
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       const next = createWindow()

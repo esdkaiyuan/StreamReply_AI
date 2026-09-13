@@ -29,8 +29,8 @@ describe('send scheduler', () => {
       maxPerMinute: 2,
       maxPerHour: 100,
       requireConfirm: false,
-      sender: async (text) => {
-        sent.push(text)
+      sender: async (t) => {
+        sent.push(t.text)
         return true
       }
     })
@@ -49,8 +49,8 @@ describe('send scheduler', () => {
       maxPerMinute: 2,
       maxPerHour: 100,
       requireConfirm: false,
-      sender: async (text) => {
-        sent.push(text)
+      sender: async (t) => {
+        sent.push(t.text)
         return true
       }
     })
@@ -71,8 +71,8 @@ describe('send scheduler', () => {
       maxPerMinute: 10,
       maxPerHour: 100,
       requireConfirm: true,
-      sender: async (text) => {
-        sent.push(text)
+      sender: async (t) => {
+        sent.push(t.text)
         return true
       }
     })

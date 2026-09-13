@@ -12,6 +12,7 @@ import { ReplyFilter } from '../sender/filter'
 import { SendScheduler } from '../sender/scheduler'
 import { bus } from '../webview/bus'
 import { sendText } from '../webview/webviewManager'
+import type { DbStore } from '../db/store'
 
 const MAX_CONTEXT = 40
 const MAX_INFLIGHT = 3
@@ -27,7 +28,11 @@ export function rebindReplyWindow(win: BrowserWindow): void {
   targetWin = win
 }
 
-export function startReplyPipeline(win: BrowserWindow, settings: Store<AppSettings>): void {
+export function startReplyPipeline(
+  win: BrowserWindow,
+  settings: Store<AppSettings>,
+  db: DbStore | null = null
+): void {
   rebindReplyWindow(win)
 
   const glm = new GlmClient({
@@ -62,7 +67,11 @@ export function startReplyPipeline(win: BrowserWindow, settings: Store<AppSettin
     get requireConfirm() {
       return settings.get('requireConfirm')
     },
-    sender: (text, roomId) => sendText(roomId, text),
+    sender: async (task) => {
+      const ok = await sendText(task.roomId, task.text)
+      db?.saveReply({ ...task, status: ok ? 'sent' : 'failed', sentAt: Date.now() })
+      return ok
+    },
     onEvent: () => pushSnapshot()
   })
 
@@ -93,6 +102,7 @@ export function startReplyPipeline(win: BrowserWindow, settings: Store<AppSettin
   })
 
   bus.on('danmaku', (msg: DanmakuMessage) => {
+    db?.enqueueDanmaku(msg)
     const recent = recentByRoom.get(msg.roomId) ?? []
     recent.push(msg)
     if (recent.length > MAX_CONTEXT) recent.splice(0, recent.length - MAX_CONTEXT)
