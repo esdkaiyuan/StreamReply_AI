@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue'
 import RoomPanel from './components/RoomPanel.vue'
 import DanmakuList from './components/DanmakuList.vue'
+import ReplyPanel from './components/ReplyPanel.vue'
+import SettingsDrawer from './components/SettingsDrawer.vue'
 import { useDanmakuStore } from './stores/danmaku'
 import { useRoomStore } from './stores/rooms'
 
@@ -25,14 +27,11 @@ onMounted(() => {
       <span class="logo">🎈 直播弹幕助手</span>
       <span class="stat">⚡ {{ rate }}/分钟</span>
       <span class="stat">👥 {{ online ?? '--' }}</span>
-      <button class="btn-cartoon topbar__settings" disabled>⚙ 设置(M3)</button>
+      <div class="topbar__settings"><SettingsDrawer /></div>
     </header>
     <aside class="glass-card sidebar"><RoomPanel /></aside>
     <main class="glass-card feed"><DanmakuList /></main>
-    <section class="glass-card reply">
-      <h3>🤖 AI 回复面板</h3>
-      <p class="reply__hint">AI 回复引擎将在 M3 接入（智谱 GLM）</p>
-    </section>
+    <section class="glass-card reply"><ReplyPanel /></section>
     <footer class="glass-card statusbar">
       房间数 {{ rooms.rooms.length }} ｜ 弹幕 {{ danmaku.items.length }} 条 ｜ 模式：B站 WS Hook
     </footer>
@@ -52,7 +51,6 @@ onMounted(() => {
 .topbar__settings { margin-left: auto; }
 .sidebar { grid-area: side; }
 .feed { grid-area: feed; overflow: hidden; }
-.reply { grid-area: reply; padding: 14px; }
-.reply__hint { font-size: 12px; opacity: 0.6; margin-top: 8px; }
+.reply { grid-area: reply; overflow: hidden; }
 .statusbar { grid-area: status; display: flex; align-items: center; padding: 0 12px; font-size: 12px; }
 </style>
