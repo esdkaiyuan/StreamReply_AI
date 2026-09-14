@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseRoomId } from '../src/main/rooms/parseRoomId'
+import { parseKuaishouRoomId, parseNumericRoomId as parseRoomId } from '../src/main/adapters/roomId'
 
 describe('parseRoomId', () => {
   it('纯数字长房间号直取', () => {
@@ -29,5 +29,23 @@ describe('parseRoomId', () => {
   it('无数字返回 null', () => {
     expect(parseRoomId('hello world')).toBeNull()
     expect(parseRoomId('   ')).toBeNull()
+  })
+})
+
+describe('快手房间号', () => {
+  it('/u/ 段取 principalId', () => {
+    expect(parseKuaishouRoomId('https://live.kuaishou.com/u/3x7abcDEF')).toBe('3x7abcDEF')
+  })
+
+  it('裸 alphanumeric ID 直取', () => {
+    expect(parseKuaishouRoomId('3x7abcDEF')).toBe('3x7abcDEF')
+  })
+
+  it('分享短链无法离线解析，返回 null 而不是瞎猜', () => {
+    expect(parseKuaishouRoomId('https://v.kuaishou.com/AbC')).toBeNull()
+  })
+
+  it('B 站 URL 不会被误判为快手 ID', () => {
+    expect(parseKuaishouRoomId('https://live.bilibili.com/21452525')).toBeNull()
   })
 })

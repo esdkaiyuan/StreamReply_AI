@@ -55,6 +55,7 @@ export const IPC = {
   wvSendText: 'wv:send-text',
   wvDouyinFrame: 'wv:dy-frame',
   wvDouyinBody: 'wv:dy-body',
+  wvKuaishouFrame: 'wv:ks-frame',
   replyUpdate: 'reply:update',
   replyConfirm: 'reply:confirm',
   replyReject: 'reply:reject',

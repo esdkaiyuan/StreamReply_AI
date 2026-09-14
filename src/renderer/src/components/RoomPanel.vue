@@ -23,7 +23,8 @@ const PLATFORM_LABEL: Record<string, string> = {
 const PLATFORMS: Array<{ value: Platform | 'auto'; label: string }> = [
   { value: 'auto', label: '自动识别' },
   { value: 'bilibili', label: 'B站' },
-  { value: 'douyin', label: '抖音' }
+  { value: 'douyin', label: '抖音' },
+  { value: 'kuaishou', label: '快手' }
 ]
 
 async function add(): Promise<void> {
@@ -48,7 +49,7 @@ onMounted(() => {
       <input
         v-model="input"
         class="input-cartoon room-input"
-        placeholder="直播间地址 / 房间号"
+        placeholder="直播间地址 / 房间号（快手填 /u/ 后的 ID）"
         @keydown.enter="add"
       />
       <button class="btn-cartoon" @click="add">添加</button>

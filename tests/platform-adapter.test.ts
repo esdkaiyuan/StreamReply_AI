@@ -12,10 +12,16 @@ describe('platform detection', () => {
     expect(detectPlatform('22637261')).toBeNull()
   })
 
-  it('已实现适配器的平台清单不含快手', () => {
-    expect(listSupportedPlatforms()).toEqual(['bilibili', 'douyin'])
-    expect(getAdapter('kuaishou')).toBeNull()
+  it('三个平台的适配器均已注册', () => {
+    expect(listSupportedPlatforms()).toEqual(['bilibili', 'douyin', 'kuaishou'])
+    expect(getAdapter('kuaishou')).not.toBeNull()
     expect(getAdapter('douyin')).not.toBeNull()
+  })
+
+  it('适配器按各自格式解析房间号', () => {
+    expect(getAdapter('bilibili')!.parseRoomId('https://live.bilibili.com/22637261')).toBe('22637261')
+    expect(getAdapter('douyin')!.parseRoomId('https://live.douyin.com/123456789')).toBe('123456789')
+    expect(getAdapter('kuaishou')!.parseRoomId('https://live.kuaishou.com/u/3x7abc')).toBe('3x7abc')
   })
 })
 

@@ -3,6 +3,7 @@ import { DOM_OBSERVER_SCRIPT } from '../../webview/inject/domObserver'
 import { buildSendScript } from '../../webview/inject/sender'
 import { WS_HOOK_SCRIPT } from '../../webview/inject/wsHook'
 import type { FrameResult, PlatformAdapter } from '..'
+import { parseNumericRoomId } from '../roomId'
 import { mapBilibiliEvent } from './mapper'
 import { OP, decodeBody, splitPackets } from './protocol'
 
@@ -10,6 +11,8 @@ export const bilibiliAdapter: PlatformAdapter = {
   platform: 'bilibili',
 
   roomUrl: (roomId) => `https://live.bilibili.com/${roomId}`,
+
+  parseRoomId: parseNumericRoomId,
 
   injectScript: () => WS_HOOK_SCRIPT,
 

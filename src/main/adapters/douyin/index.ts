@@ -2,6 +2,7 @@ import type { CaptureSource, DanmakuMessage } from '../../../shared/types'
 import { DOUYIN_HOOK_SCRIPT } from '../../webview/inject/douyinHook'
 import { buildDouyinSendScript } from '../../webview/inject/douyinSender'
 import type { FrameResult, PlatformAdapter } from '..'
+import { parseNumericRoomId } from '../roomId'
 import { parsePushFrame } from './frame'
 import { mapDouyinMessage } from './mapper'
 
@@ -9,6 +10,8 @@ export const douyinAdapter: PlatformAdapter = {
   platform: 'douyin',
 
   roomUrl: (roomId) => `https://live.douyin.com/${roomId}`,
+
+  parseRoomId: parseNumericRoomId,
 
   injectScript: () => DOUYIN_HOOK_SCRIPT,
 

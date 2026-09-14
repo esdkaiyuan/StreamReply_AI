@@ -1,6 +1,7 @@
 import type { CaptureSource, DanmakuMessage, Platform } from '../../shared/types'
 import { bilibiliAdapter } from './bilibili'
 import { douyinAdapter } from './douyin'
+import { kuaishouAdapter } from './kuaishou'
 
 export interface FrameResult {
   danmaku: DanmakuMessage[]
@@ -12,6 +13,8 @@ export interface FrameResult {
 export interface PlatformAdapter {
   readonly platform: Platform
   roomUrl(roomId: string): string
+  /** 从用户输入解析本平台的房间号 */
+  parseRoomId(input: string): string | null
   /** 注入页面主世界的抓取脚本 */
   injectScript(): string
   /** WS 长时间无数据时的 DOM 兜底脚本；平台未支持返回 null */
@@ -27,7 +30,7 @@ export interface PlatformAdapter {
 const registry: Record<Platform, PlatformAdapter | null> = {
   bilibili: bilibiliAdapter,
   douyin: douyinAdapter,
-  kuaishou: null // 三期
+  kuaishou: kuaishouAdapter
 }
 
 export function getAdapter(platform: Platform): PlatformAdapter | null {
@@ -39,8 +42,8 @@ export function listSupportedPlatforms(): Platform[] {
 }
 
 /**
- * 从用户输入识别平台：能识别 URL 域名的直接返回，裸房间号返回 null
- * 由调用方按用户所选平台兜底（一期默认 B 站，保持向后兼容）。
+ * 从用户输入识别平台：能识别 URL 域名的直接返回，裸房间号返回 null，
+ * 由调用方按用户所选平台兜底（默认 B 站，保持一期行为）。
  */
 export function detectPlatform(input: string): Platform | null {
   const t = input.toLowerCase()

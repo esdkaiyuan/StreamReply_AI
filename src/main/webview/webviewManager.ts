@@ -171,6 +171,7 @@ function ensureIpcRoutes(): void {
   onFrame(IPC.wvFrame)
   onFrame(IPC.wvDouyinFrame)
   onFrame(IPC.wvDouyinBody)
+  onFrame(IPC.wvKuaishouFrame)
   ipcMain.on(IPC.wvDomMessages, (e, messages: Array<{ nickname: string; content: string }>) => {
     const room = roomBySender(e.sender)
     if (!room || !room.domMode) return // 主通道已接管后到达的 DOM 批次丢弃，防双源重复弹幕

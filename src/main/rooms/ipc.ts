@@ -2,9 +2,8 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { IPC } from '../../shared/types'
 import type { DanmakuMessage, Platform } from '../../shared/types'
 import { openRoom, closeRoom, listRooms, bindMainWindow } from '../webview/webviewManager'
-import { detectPlatform } from '../adapters'
+import { detectPlatform, getAdapter } from '../adapters'
 import { bus } from '../webview/bus'
-import { parseRoomId } from './parseRoomId'
 
 /** 当前绑定的主窗口；activate 重建窗口后经 rebindRoomWindow 更新 */
 let boundWin: BrowserWindow | null = null
@@ -42,9 +41,12 @@ export function registerRoomIpc(win: BrowserWindow): void {
   ipcMain.handle(IPC.roomAdd, async (_e, input: string, platform?: Platform) => {
     const text = String(input ?? '').trim()
     if (!text) return { ok: false, error: '请输入直播间地址或房间号' }
-    const roomId = parseRoomId(text)
-    if (!roomId) return { ok: false, error: '无法从输入中解析房间号' }
     const resolved = platform ?? detectPlatform(text) ?? 'bilibili'
+    const adapter = getAdapter(resolved)
+    if (!adapter) return { ok: false, error: `平台「${resolved}」尚未支持` }
+    // 按平台各自的房间号格式解析（快手是字母数字 ID，不是纯数字）
+    const roomId = adapter.parseRoomId(text)
+    if (!roomId) return { ok: false, error: `无法从输入中解析 ${resolved} 的房间号` }
     try {
       await openRoom(resolved, roomId)
       return { ok: true }

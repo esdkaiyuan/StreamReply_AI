@@ -28,6 +28,9 @@ window.addEventListener('message', (ev) => {
   } else if (d.__LDA__ === 'dy-body' && d.buf instanceof ArrayBuffer) {
     if (d.buf.byteLength > 16 * 1024 * 1024) return
     ipcRenderer.send(IPC.wvDouyinBody, new Uint8Array(d.buf))
+  } else if (d.__LDA__ === 'ks-frame' && d.buf instanceof ArrayBuffer) {
+    if (d.buf.byteLength > 4 * 1024 * 1024) return
+    ipcRenderer.send(IPC.wvKuaishouFrame, new Uint8Array(d.buf))
   }
 })
 
