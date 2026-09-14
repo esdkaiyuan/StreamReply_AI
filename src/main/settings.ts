@@ -20,11 +20,27 @@ export const DEFAULT_SETTINGS: AppSettings = {
   aiEnabled: false
 }
 
-/** 幂等：多次调用返回同一份配置文件（electron-store 多实例安全）。Key 默认取 .env.local */
+let cachedEnvKey: string | null = null
+
+/**
+ * .env.local 里的 Key 只作为「兜底来源」按需读取，
+ * 不写入 electron-store 默认值——否则会把明文 Key 复制进 settings.json。
+ */
+export function envApiKey(): string {
+  if (cachedEnvKey === null) cachedEnvKey = loadProjectEnv(app.getAppPath())['ZHIPU_API_KEY'] ?? ''
+  return cachedEnvKey
+}
+
+export function hasApiKey(settings: Store<AppSettings>): boolean {
+  return Boolean(settings.get('glmApiKey') || envApiKey())
+}
+
+/** 优先级：设置里显式填写的 Key > .env.local */
+export function effectiveApiKey(settings: Store<AppSettings>): string {
+  return settings.get('glmApiKey') || envApiKey()
+}
+
+/** 幂等：多次调用返回同一份配置文件（electron-store 多实例安全） */
 export function loadSettings(): Store<AppSettings> {
-  const env = loadProjectEnv(app.getAppPath())
-  return new Store<AppSettings>({
-    name: 'settings',
-    defaults: { ...DEFAULT_SETTINGS, glmApiKey: env['ZHIPU_API_KEY'] ?? '' }
-  })
+  return new Store<AppSettings>({ name: 'settings', defaults: { ...DEFAULT_SETTINGS } })
 }

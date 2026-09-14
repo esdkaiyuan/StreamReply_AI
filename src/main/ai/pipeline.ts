@@ -10,6 +10,7 @@ import { buildPrompt } from './prompt'
 import { shouldReply } from './trigger'
 import { ReplyFilter } from '../sender/filter'
 import { SendScheduler } from '../sender/scheduler'
+import { effectiveApiKey, hasApiKey } from '../settings'
 import { bus } from '../webview/bus'
 import { sendText } from '../webview/webviewManager'
 import type { DbStore } from '../db/store'
@@ -40,7 +41,7 @@ export function startReplyPipeline(
       return settings.get('glmBaseUrl')
     },
     get apiKey() {
-      return settings.get('glmApiKey')
+      return effectiveApiKey(settings)
     },
     get model() {
       return settings.get('glmModel')
@@ -92,7 +93,7 @@ export function startReplyPipeline(
   function pushState(): void {
     push(IPC.aiState, {
       aiEnabled: settings.get('aiEnabled'),
-      hasApiKey: Boolean(settings.get('glmApiKey')),
+      hasApiKey: hasApiKey(settings),
       model: settings.get('glmModel'),
       dbAvailable: db !== null
     })
@@ -105,7 +106,7 @@ export function startReplyPipeline(
 
   /** 手动为指定弹幕生成一条回复（不看触发器开关，但需配置 Key） */
   ipcMain.handle(IPC.replyManual, async (_e, msg: DanmakuMessage) => {
-    if (!settings.get('glmApiKey')) {
+    if (!hasApiKey(settings)) {
       log('error', '未配置 GLM API Key，无法生成回复')
       return false
     }
@@ -170,7 +171,7 @@ export function startReplyPipeline(
     if (recent.length > MAX_CONTEXT) recent.splice(0, recent.length - MAX_CONTEXT)
     recentByRoom.set(msg.roomId, recent)
 
-    if (!settings.get('aiEnabled') || !settings.get('glmApiKey')) return
+    if (!settings.get('aiEnabled') || !hasApiKey(settings)) return
     if (!shouldReply(msg, settings.get('triggerMode'), settings.get('keywords'))) return
     if (inflight >= MAX_INFLIGHT) return
 
