@@ -10,11 +10,12 @@ describe('platform detection', () => {
     expect(detectPlatform('https://live.bilibili.com/22637261')).toBe('bilibili')
     expect(detectPlatform('https://live.kuaishou.com/u/abc')).toBe('kuaishou')
     expect(detectPlatform('https://www.douyu.com/9999')).toBe('douyu')
+    expect(detectPlatform('https://www.huya.com/660000')).toBe('huya')
     expect(detectPlatform('22637261')).toBeNull()
   })
 
   it('已实现的平台适配器全部注册', () => {
-    expect(listSupportedPlatforms()).toEqual(['bilibili', 'douyin', 'kuaishou', 'douyu'])
+    expect(listSupportedPlatforms()).toEqual(['bilibili', 'douyin', 'kuaishou', 'douyu', 'huya'])
     expect(getAdapter('kuaishou')).not.toBeNull()
     expect(getAdapter('douyin')).not.toBeNull()
   })
@@ -24,6 +25,8 @@ describe('platform detection', () => {
     expect(getAdapter('douyin')!.parseRoomId('https://live.douyin.com/123456789')).toBe('123456789')
     expect(getAdapter('kuaishou')!.parseRoomId('https://live.kuaishou.com/u/3x7abc')).toBe('3x7abc')
     expect(getAdapter('douyu')!.parseRoomId('https://www.douyu.com/9999')).toBe('9999')
+    expect(getAdapter('huya')!.parseRoomId('https://www.huya.com/660000')).toBe('660000')
+    expect(getAdapter('huya')!.parseRoomId('https://www.huya.com/kaerlol')).toBe('kaerlol')
   })
 })
 

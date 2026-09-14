@@ -1,4 +1,4 @@
-export type Platform = 'bilibili' | 'douyin' | 'kuaishou' | 'douyu'
+export type Platform = 'bilibili' | 'douyin' | 'kuaishou' | 'douyu' | 'huya'
 export type DanmakuType = 'chat' | 'enter' | 'gift' | 'like' | 'follow' | 'share'
 export type CaptureSource = 'ws' | 'dom'
 export type RoomStatus = 'idle' | 'loading' | 'connected' | 'fallback-dom' | 'error' | 'closed'
@@ -57,6 +57,7 @@ export const IPC = {
   wvDouyinBody: 'wv:dy-body',
   wvKuaishouFrame: 'wv:ks-frame',
   wvDouyuFrame: 'wv:douyu-frame',
+  wvHuyaFrame: 'wv:huya-frame',
   replyUpdate: 'reply:update',
   replyConfirm: 'reply:confirm',
   replyReject: 'reply:reject',
@@ -85,7 +86,8 @@ export const FRAME_CHANNELS: Record<string, { channel: string; maxBytes: number 
   'dy-frame': { channel: 'wv:dy-frame', maxBytes: 4 * 1024 * 1024 },
   'dy-body': { channel: 'wv:dy-body', maxBytes: 16 * 1024 * 1024 },
   'ks-frame': { channel: 'wv:ks-frame', maxBytes: 4 * 1024 * 1024 },
-  'douyu-frame': { channel: 'wv:douyu-frame', maxBytes: 1024 * 1024 }
+  'douyu-frame': { channel: 'wv:douyu-frame', maxBytes: 1024 * 1024 },
+  'huya-frame': { channel: 'wv:huya-frame', maxBytes: 1024 * 1024 }
 }
 
 export type Emotion = 'answer' | 'thanks' | 'greet' | 'tease' | 'comfort'

@@ -15,6 +15,17 @@ export function parseNumericRoomId(input: string): string | null {
   return loose ? loose[1] : null
 }
 
+const HUYA_ID = /^[A-Za-z0-9_-]{2,40}$/
+
+/** 虎牙房间号：数字房间号或主播自定义号（如 kaerlol），取 huya.com/ 之后的第一段 */
+export function parseHuyaRoomId(input: string): string | null {
+  const t = input.trim()
+  if (!t) return null
+  const seg = t.match(/huya\.com\/([A-Za-z0-9_-]+)/i)
+  if (seg) return seg[1]
+  return HUYA_ID.test(t) ? t : null
+}
+
 const KS_ID = /^[A-Za-z0-9_-]{4,64}$/
 
 /** 快手房间号：URL 的 /u/ 或 /profile/ 段；或直接给的 alphanumeric ID */

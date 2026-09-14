@@ -2,6 +2,7 @@ import type { CaptureSource, DanmakuMessage, Platform } from '../../shared/types
 import { bilibiliAdapter } from './bilibili'
 import { douyinAdapter } from './douyin'
 import { douyuAdapter } from './douyu'
+import { huyaAdapter } from './huya'
 import { kuaishouAdapter } from './kuaishou'
 
 export interface FrameResult {
@@ -32,7 +33,8 @@ const registry: Record<Platform, PlatformAdapter | null> = {
   bilibili: bilibiliAdapter,
   douyin: douyinAdapter,
   kuaishou: kuaishouAdapter,
-  douyu: douyuAdapter
+  douyu: douyuAdapter,
+  huya: huyaAdapter
 }
 
 export function getAdapter(platform: Platform): PlatformAdapter | null {
@@ -52,6 +54,7 @@ export function detectPlatform(input: string): Platform | null {
   if (t.includes('douyin.com')) return 'douyin'
   if (t.includes('kuaishou.com')) return 'kuaishou'
   if (t.includes('douyu.com')) return 'douyu'
+  if (t.includes('huya.com')) return 'huya'
   if (t.includes('bilibili.com') || t.includes('b23.tv')) return 'bilibili'
   return null
 }
