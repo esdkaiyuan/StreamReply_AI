@@ -6,6 +6,20 @@ import { startReplyPipeline, rebindReplyWindow } from './ai/pipeline'
 import type { DbStore } from './db/store'
 import { registerHistoryIpc } from './db/historyIpc'
 
+/**
+ * 无可用 GPU 的环境（虚拟机 / 远程桌面 / CI / 沙箱）里，Chromium 的 GPU 进程会反复崩溃并
+ * 直接以 "GPU process isn't usable" 退出，应用根本起不来。显式关掉硬件加速即可。
+ * 默认不开启，避免影响正常带显卡的桌面环境。
+ * 用法：npm run dev:nogpu（等价于传 --no-gpu）或设 LDA_NO_GPU=1
+ */
+if (process.argv.includes('--no-gpu') || process.env['LDA_NO_GPU'] === '1') {
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-software-rasterizer')
+  // 关键：让 GPU 逻辑跑在浏览器主进程内，避免独立 GPU 进程启动失败直接把应用拖死
+  app.commandLine.appendSwitch('in-process-gpu')
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 1080, minHeight: 640,
