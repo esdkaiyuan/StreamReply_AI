@@ -1,5 +1,5 @@
 import { gunzipSync, inflateRawSync, inflateSync } from 'zlib'
-import { asBytes, asString, decodeMessage, type ProtoMessage } from './protobuf'
+import { asBytes, asString, decodeMessage, type ProtoMessage } from '../protobuf'
 
 /** 解压上限，防解压炸弹（与 B 站协议层同一安全基线） */
 const MAX_DECOMPRESSED = 8 * 1024 * 1024

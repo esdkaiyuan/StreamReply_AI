@@ -7,7 +7,7 @@ import {
   asNumber,
   asString,
   decodeMessage
-} from '../src/main/adapters/douyin/protobuf'
+} from '../src/main/adapters/protobuf'
 
 /** ---- protobuf 编码辅助，用于构造测试字节 ---- */
 function varint(n: number): number[] {

@@ -1,5 +1,5 @@
 import type { CaptureSource, DanmakuMessage, DanmakuType } from '../../../shared/types'
-import { asBigString, asMessage, asNumber, asString, decodeMessage, type ProtoMessage } from './protobuf'
+import { asBigString, asMessage, asNumber, asString, decodeMessage, type ProtoMessage } from '../protobuf'
 
 /** 抖币 → 元按 10:1 估算（抖音充值比例随档位浮动，此处仅作展示参考） */
 const COIN_PER_YUAN = 10
