@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
 import type Store from 'electron-store'
-import type { DanmakuMessage, ReplyTask } from '../../shared/types'
+import type { AiLogLevel, DanmakuMessage, ReplyTask } from '../../shared/types'
 import { IPC } from '../../shared/types'
 import type { AppSettings } from '../../shared/types'
 import { GlmClient } from './client'
@@ -70,6 +70,10 @@ export function startReplyPipeline(
     sender: async (task) => {
       const ok = await sendText(task.roomId, task.text)
       db?.saveReply({ ...task, status: ok ? 'sent' : 'failed', sentAt: Date.now() })
+      log(
+        ok ? 'info' : 'error',
+        ok ? `已发送给 ${task.replyTo}：${task.text}` : `发送失败（未找到输入框或页面异常）：${task.text}`
+      )
       return ok
     },
     onEvent: () => pushSnapshot()
@@ -78,6 +82,58 @@ export function startReplyPipeline(
   function pushSnapshot(): void {
     push(IPC.replyUpdate, scheduler.snapshot())
   }
+
+  /** 把「为什么没回复」暴露到 UI，避免全链路静默 */
+  function log(level: AiLogLevel, message: string, nickname?: string): void {
+    push(IPC.aiLog, { level, message, nickname, ts: Date.now() })
+    if (level === 'error') console.error('[ai]', message)
+  }
+
+  function pushState(): void {
+    push(IPC.aiState, {
+      aiEnabled: settings.get('aiEnabled'),
+      hasApiKey: Boolean(settings.get('glmApiKey')),
+      model: settings.get('glmModel'),
+      dbAvailable: db !== null
+    })
+  }
+
+  ipcMain.handle(IPC.replyEdit, (_e, id: string, text: string) => {
+    scheduler.edit(String(id), String(text ?? '').slice(0, 40))
+    pushSnapshot()
+  })
+
+  /** 手动为指定弹幕生成一条回复（不看触发器开关，但需配置 Key） */
+  ipcMain.handle(IPC.replyManual, async (_e, msg: DanmakuMessage) => {
+    if (!settings.get('glmApiKey')) {
+      log('error', '未配置 GLM API Key，无法生成回复')
+      return false
+    }
+    await handleDanmaku(msg, recentByRoom.get(msg.roomId) ?? [])
+    return true
+  })
+
+  /** 手动发弹幕：用户显式操作，直接发，不再排队 */
+  ipcMain.handle(IPC.manualSend, async (_e, roomId: string, text: string) => {
+    const content = String(text ?? '').trim()
+    if (!content) return false
+    const ok = await sendText(String(roomId), content)
+    if (ok) {
+      db?.saveReply({
+        id: randomUUID(),
+        roomId: String(roomId),
+        replyTo: '手动发送',
+        text: content,
+        emotion: 'answer',
+        priority: 'normal',
+        status: 'sent',
+        createdAt: Date.now(),
+        sentAt: Date.now()
+      })
+    }
+    log(ok ? 'info' : 'error', ok ? `手动发送成功：${content}` : `手动发送失败：${content}`)
+    return ok
+  })
 
   ipcMain.handle(IPC.replyConfirm, (_e, id: string) => {
     scheduler.confirm(id)
@@ -93,13 +149,19 @@ export function startReplyPipeline(
   })
   ipcMain.handle(IPC.aiToggle, () => {
     settings.set('aiEnabled', !settings.get('aiEnabled'))
-    return settings.get('aiEnabled')
+    const enabled = settings.get('aiEnabled')
+    log('info', enabled ? 'AI 回复已开启' : 'AI 回复已关闭')
+    pushState()
+    return enabled
   })
   ipcMain.handle(IPC.settingsGet, () => settings.store)
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<AppSettings>) => {
     settings.set(patch as never)
+    pushState()
     return settings.store
   })
+
+  pushState()
 
   bus.on('danmaku', (msg: DanmakuMessage) => {
     db?.enqueueDanmaku(msg)
@@ -127,10 +189,20 @@ export function startReplyPipeline(
         // 规格第 5 节：校验失败重试 1 次，仍失败则丢弃并记日志
         reply = parseReply(await chatAsString(system, user))
       }
-      if (!reply || reply.action !== 'reply' || !reply.text) return
+      if (!reply) {
+        log('warn', 'AI 输出不是合法 JSON，已丢弃', msg.user.nickname)
+        return
+      }
+      if (reply.action !== 'reply' || !reply.text) {
+        log('info', `AI 判断无需回复：${reply.reason || '未说明'}`, msg.user.nickname)
+        return
+      }
 
       filter.setSensitiveWords(settings.get('sensitiveWords'))
-      if (!filter.passesText(reply.text)) return
+      if (!filter.passesText(reply.text)) {
+        log('warn', `回复被敏感词/重复过滤拦截：${reply.text}`, msg.user.nickname)
+        return
+      }
 
       const task: ReplyTask = {
         id: randomUUID(),
@@ -147,9 +219,10 @@ export function startReplyPipeline(
       if (repliedPairs.length > 30) repliedPairs.splice(0, repliedPairs.length - 30)
       repliedByRoom.set(msg.roomId, repliedPairs)
       scheduler.enqueue(task)
+      log('info', `已生成回复 → ${msg.user.nickname}：${reply.text}`, msg.user.nickname)
       pushSnapshot()
     } catch (err) {
-      console.error('[ai] reply pipeline error', err)
+      log('error', `AI 生成失败：${err instanceof Error ? err.message : String(err)}`, msg.user.nickname)
     }
   }
 

@@ -56,6 +56,14 @@ export class SendScheduler {
     this.emit()
   }
 
+  /** 人工确认前修改回复文本 */
+  edit(id: string, text: string): void {
+    const t = this.history.find((x) => x.id === id && x.status === 'pending-confirm')
+    if (!t) return
+    t.text = text
+    this.emit()
+  }
+
   retry(id: string): void {
     const t = this.history.find((x) => x.id === id && x.status === 'failed')
     if (!t) return

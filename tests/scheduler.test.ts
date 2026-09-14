@@ -86,6 +86,28 @@ describe('send scheduler', () => {
     expect(sent).toEqual(['x'])
   })
 
+  it('待确认回复可编辑后再发送', async () => {
+    const sent: string[] = []
+    const s = new SendScheduler({
+      minDelayMs: 0,
+      maxDelayMs: 0,
+      maxPerMinute: 10,
+      maxPerHour: 100,
+      requireConfirm: true,
+      sender: async (t) => {
+        sent.push(t.text)
+        return true
+      }
+    })
+    const t = task({ text: '原文本' })
+    s.enqueue(t)
+    s.edit(t.id, '改过的文本')
+    expect(s.pendingConfirm()[0].text).toBe('改过的文本')
+    s.confirm(t.id)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(sent).toEqual(['改过的文本'])
+  })
+
   it('连续失败 3 次熔断 5 分钟', async () => {
     const sender = vi.fn(async () => false)
     const s = new SendScheduler({
