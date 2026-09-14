@@ -4,6 +4,7 @@ import { registerRoomIpc, rebindRoomWindow } from './rooms/ipc'
 import { loadSettings } from './settings'
 import { startReplyPipeline, rebindReplyWindow } from './ai/pipeline'
 import type { DbStore } from './db/store'
+import { registerHistoryIpc } from './db/historyIpc'
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -35,6 +36,7 @@ app.whenReady().then(async () => {
   const win = createWindow()
   registerRoomIpc(win)
   const db = await openDb()
+  registerHistoryIpc(() => db)
   startReplyPipeline(win, loadSettings(), db)
   app.on('will-quit', () => db?.close())
   app.on('activate', () => {

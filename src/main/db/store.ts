@@ -1,7 +1,43 @@
 import Database from 'better-sqlite3'
-import type { DanmakuMessage, ReplyTask } from '../../shared/types'
+import type {
+  DanmakuMessage,
+  HistoryDanmaku,
+  HistoryQuery,
+  HistoryReply,
+  ReplyTask
+} from '../../shared/types'
 
 const FLUSH_INTERVAL_MS = 2000
+const MAX_LIMIT = 500
+
+/** LIKE 元字符转义，配合 ESCAPE '\' 使用，避免用户输入的 % / _ 变成通配符 */
+function escapeLike(input: string): string {
+  return input.replace(/[\\%_]/g, (c) => `\\${c}`)
+}
+
+function clampLimit(limit: number | undefined): number {
+  if (!Number.isFinite(limit)) return 100
+  return Math.min(Math.max(Math.trunc(limit as number), 1), MAX_LIMIT)
+}
+
+function buildFilter(
+  q: HistoryQuery,
+  searchFields: string[]
+): { clause: string; params: Record<string, unknown> } {
+  const where: string[] = []
+  const params: Record<string, unknown> = {}
+  if (q.roomId) {
+    where.push('room_id = @roomId')
+    params['roomId'] = q.roomId
+  }
+  const kw = q.keyword?.trim()
+  if (kw) {
+    const parts = searchFields.map((f) => `${f} LIKE @kw ESCAPE '\\'`)
+    where.push(`(${parts.join(' OR ')})`)
+    params['kw'] = `%${escapeLike(kw)}%`
+  }
+  return { clause: where.length ? `WHERE ${where.join(' AND ')}` : '', params }
+}
 
 export class DbStore {
   private db: Database.Database
@@ -75,6 +111,32 @@ export class DbStore {
       createdAt: t.createdAt,
       sentAt: t.sentAt ?? null
     })
+  }
+
+  queryDanmaku(q: HistoryQuery = {}): HistoryDanmaku[] {
+    this.flush() // 先落盘，保证刚捕获的弹幕立刻可查
+    const { clause, params } = buildFilter(q, ['content', 'nickname'])
+    params['limit'] = clampLimit(q.limit)
+    params['offset'] = Math.max(Math.trunc(q.offset ?? 0), 0)
+    return this.db
+      .prepare(
+        `SELECT id, platform, room_id AS roomId, type, uid, nickname, content, source, ts
+         FROM danmaku ${clause} ORDER BY ts DESC LIMIT @limit OFFSET @offset`
+      )
+      .all(params) as HistoryDanmaku[]
+  }
+
+  queryReplies(q: HistoryQuery = {}): HistoryReply[] {
+    const { clause, params } = buildFilter(q, ['text', 'reply_to'])
+    params['limit'] = clampLimit(q.limit)
+    params['offset'] = Math.max(Math.trunc(q.offset ?? 0), 0)
+    return this.db
+      .prepare(
+        `SELECT id, room_id AS roomId, reply_to AS replyTo, text, emotion, status,
+                created_at AS createdAt, sent_at AS sentAt
+         FROM replies ${clause} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`
+      )
+      .all(params) as HistoryReply[]
   }
 
   countDanmaku(): number {

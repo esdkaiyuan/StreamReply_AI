@@ -57,7 +57,14 @@ export const IPC = {
   replyConfirm: 'reply:confirm',
   replyReject: 'reply:reject',
   replyRetry: 'reply:retry',
+  replyEdit: 'reply:edit',
+  replyManual: 'reply:manual',
   aiToggle: 'ai:toggle',
+  aiLog: 'ai:log',
+  aiState: 'ai:state',
+  manualSend: 'manual:send',
+  historyDanmaku: 'history:danmaku',
+  historyReplies: 'history:replies',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set'
 } as const
@@ -79,6 +86,59 @@ export interface ReplyTask {
   reason?: string
   createdAt: number
   sentAt?: number
+}
+
+export interface HistoryDanmaku {
+  id: string
+  platform: Platform
+  roomId: string
+  type: DanmakuType
+  uid: string
+  nickname: string
+  content: string
+  source: CaptureSource
+  ts: number
+}
+
+export interface HistoryReply {
+  id: string
+  roomId: string
+  replyTo: string
+  text: string
+  emotion: string
+  status: string
+  createdAt: number
+  sentAt: number | null
+}
+
+export interface HistoryQuery {
+  roomId?: string
+  keyword?: string
+  limit?: number
+  offset?: number
+}
+
+export interface HistoryResult<T> {
+  /** 原生模块不可用（未针对 Electron ABI 重建）时为 false */
+  available: boolean
+  items: T[]
+}
+
+export type AiLogLevel = 'info' | 'warn' | 'error'
+
+export interface AiLogEntry {
+  level: AiLogLevel
+  message: string
+  nickname?: string
+  ts: number
+}
+
+/** 回复链路当前状态，供 UI 提示「为什么没有回复」 */
+export interface AiState {
+  aiEnabled: boolean
+  hasApiKey: boolean
+  model: string
+  dbAvailable: boolean
 }
 
 /** 设置项：主进程持久化，渲染进程经 IPC 读写，故定义在共享层 */
