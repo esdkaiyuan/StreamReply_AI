@@ -22,6 +22,12 @@ window.addEventListener('message', (ev) => {
     ipcRenderer.send(IPC.wvDomReady)
   } else if (d.__LDA__ === 'dom-messages' && Array.isArray(d.messages)) {
     ipcRenderer.send(IPC.wvDomMessages, d.messages)
+  } else if (d.__LDA__ === 'dy-frame' && d.buf instanceof ArrayBuffer) {
+    if (d.buf.byteLength > 4 * 1024 * 1024) return // 抖音帧含批量消息，上限放宽到 4MB
+    ipcRenderer.send(IPC.wvDouyinFrame, new Uint8Array(d.buf))
+  } else if (d.__LDA__ === 'dy-body' && d.buf instanceof ArrayBuffer) {
+    if (d.buf.byteLength > 16 * 1024 * 1024) return
+    ipcRenderer.send(IPC.wvDouyinBody, new Uint8Array(d.buf))
   }
 })
 

@@ -53,6 +53,8 @@ export const IPC = {
   wvDomReady: 'wv:dom-ready',
   wvDomMessages: 'wv:dom-messages',
   wvSendText: 'wv:send-text',
+  wvDouyinFrame: 'wv:dy-frame',
+  wvDouyinBody: 'wv:dy-body',
   replyUpdate: 'reply:update',
   replyConfirm: 'reply:confirm',
   replyReject: 'reply:reject',

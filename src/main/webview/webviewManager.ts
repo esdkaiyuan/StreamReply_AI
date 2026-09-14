@@ -1,27 +1,18 @@
 import { WebContentsView, ipcMain, BrowserWindow } from 'electron'
 import { join } from 'path'
-import type { DanmakuMessage, Platform, RoomInfo, RoomStatus, RoomStatEvent } from '../../shared/types'
+import type { Platform, RoomInfo, RoomStatus } from '../../shared/types'
 import { IPC } from '../../shared/types'
-import { OP, splitPackets, decodeBody } from '../adapters/bilibili/protocol'
-import { mapBilibiliEvent } from '../adapters/bilibili/mapper'
-import { WS_HOOK_SCRIPT } from './inject/wsHook'
-import { DOM_OBSERVER_SCRIPT } from './inject/domObserver'
-import { buildSendScript } from './inject/sender'
+import { getAdapter, type PlatformAdapter } from '../adapters'
 import { bus } from './bus'
 
 interface RoomSession {
   info: RoomInfo
+  adapter: PlatformAdapter
   view: WebContentsView
   gotWsMeta: boolean
   domMode: boolean
   retryCount: number
   watchdog: NodeJS.Timeout
-}
-
-const PLATFORM_URL: Record<Platform, (id: string) => string> = {
-  bilibili: (id) => `https://live.bilibili.com/${id}`,
-  douyin: (id) => `https://live.douyin.com/${id}`,
-  kuaishou: (id) => `https://live.kuaishou.com/u/${id}`
 }
 
 const rooms = new Map<string, RoomSession>()
@@ -37,35 +28,48 @@ function setStatus(room: RoomSession, status: RoomStatus): void {
   mainWindow?.webContents.send(IPC.roomStatusChanged, room.info)
 }
 
+/** 收到任意一帧可解析数据即视为抓取成功（不依赖平台是否走 WebSocket） */
+function markCaptured(room: RoomSession): void {
+  if (!room.gotWsMeta) {
+    room.gotWsMeta = true
+    room.domMode = false // 主通道生效后退出兜底，DOM 批次由 domMode 守卫生效
+    setStatus(room, 'connected')
+  }
+  clearTimeout(room.watchdog)
+}
+
 function handleFrame(room: RoomSession, data: Uint8Array): void {
-  const buf = Buffer.from(data)
+  const source = room.domMode ? 'dom' : 'ws'
+  let result: ReturnType<PlatformAdapter['parseFrame']>
   try {
-    for (const packet of splitPackets(buf)) {
-      if (packet.op !== OP.MESSAGE) continue // 认证/心跳由页面自身处理
-      // decodeBody：protover 3 brotli 解压（8MB 上限+坏帧安全丢弃）/0 原样，与协议层单一实现
-      for (const body of decodeBody(packet)) {
-        let event: Record<string, unknown>
-        try { event = JSON.parse(body.toString('utf8')) } catch { continue }
-        const cmd = String(event['cmd'] ?? '')
-        const mapped = mapBilibiliEvent(cmd, event, room.info.roomId, room.domMode ? 'dom' : 'ws')
-        if (mapped && 'type' in mapped) bus.publish(mapped as DanmakuMessage)
-        else if (mapped) {
-          // 用本地总线速率覆盖 mapper 的占位值（danmakuRate: -1）
-          const stat = mapped as RoomStatEvent
-          mainWindow?.webContents.send(IPC.roomStat, bus.buildStat(room.info.platform, room.info.roomId, stat.onlineCount))
-        }
-      }
-    }
+    result = room.adapter.parseFrame(Buffer.from(data), room.info.roomId, source)
   } catch (err) {
     console.error('[wv] frame parse error', err)
+    return
+  }
+  if (result.danmaku.length === 0 && result.onlineCount === undefined) return
+  markCaptured(room)
+  for (const msg of result.danmaku) bus.publish(msg)
+  if (result.onlineCount !== undefined) {
+    mainWindow?.webContents.send(
+      IPC.roomStat,
+      bus.buildStat(room.info.platform, room.info.roomId, result.onlineCount)
+    )
   }
 }
 
 function startDomFallback(room: RoomSession): void {
   if (room.domMode) return
+  const script = room.adapter.domFallbackScript()
+  if (!script) {
+    // 该平台暂无 DOM 兜底（选择器待确认），如实报错而不是假装已连上
+    console.warn(`[wv] ${room.info.platform} 无 DOM 兜底脚本，放弃该房间`)
+    setStatus(room, 'error')
+    return
+  }
   room.domMode = true
-  // 注入成功≠容器就绪：'fallback-dom' 改由 dom-ready 信号（容器真正找到并开始观察）置位
-  void room.view.webContents.executeJavaScript(DOM_OBSERVER_SCRIPT).catch((err) => {
+  // 注入成功≠容器就绪：'fallback-dom' 由 dom-ready 信号（容器真正找到并开始观察）置位
+  void room.view.webContents.executeJavaScript(script).catch((err) => {
     console.error('[wv] dom fallback inject failed', err)
     setStatus(room, 'error')
   })
@@ -73,6 +77,9 @@ function startDomFallback(room: RoomSession): void {
 
 export async function openRoom(platform: Platform, roomId: string): Promise<void> {
   if (rooms.has(roomId)) return
+  const adapter = getAdapter(platform)
+  if (!adapter) throw new Error(`平台 ${platform} 的适配器尚未实现`)
+
   const view = new WebContentsView({
     webPreferences: {
       preload: join(__dirname, '../preload/webview.js'),
@@ -83,6 +90,7 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   })
   const session: RoomSession = {
     info: { roomId, platform, status: 'loading', addedAt: Date.now() },
+    adapter,
     view,
     gotWsMeta: false,
     domMode: false,
@@ -111,7 +119,7 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   }
 
   view.webContents.on('dom-ready', async () => {
-    await view.webContents.executeJavaScript(WS_HOOK_SCRIPT).catch(() => 'inject-failed')
+    await view.webContents.executeJavaScript(adapter.injectScript()).catch(() => 'inject-failed')
   })
 
   view.webContents.on('render-process-gone', (_e, details) => {
@@ -125,7 +133,7 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   ensureIpcRoutes()
 
   armWatchdog()
-  await view.webContents.loadURL(PLATFORM_URL[platform](roomId))
+  await view.webContents.loadURL(adapter.roomUrl(roomId))
 }
 
 /** IPC 路由模块级幂等注册一次，按 sender 路由到对应房间（避免每房间重复注册导致泄漏） */
@@ -136,31 +144,40 @@ function ensureIpcRoutes(): void {
   const roomBySender = (sender: Electron.WebContents): RoomSession | undefined =>
     Array.from(rooms.values()).find((r) => r.view.webContents === sender)
 
-  ipcMain.on(IPC.wvInjectReady, () => { /* hook 安装确认，无需处理 */ })
+  const onFrame = (channel: string): void => {
+    ipcMain.on(channel, (e, data: Uint8Array) => {
+      const room = roomBySender(e.sender)
+      if (room) handleFrame(room, data)
+    })
+  }
+
+  ipcMain.on(IPC.wvInjectReady, () => {
+    /* hook 安装确认，无需处理 */
+  })
   ipcMain.on(IPC.wvDomReady, (e) => {
     const room = roomBySender(e.sender)
-    if (room && room.domMode) setStatus(room, 'fallback-dom') // 仅兜底模式下接受，防 WS 接管后状态回跳
+    if (room && room.domMode) setStatus(room, 'fallback-dom') // 仅兜底模式下接受，防主通道接管后状态回跳
   })
   ipcMain.on(IPC.wvWsMeta, (e, url: string) => {
     const room = roomBySender(e.sender)
     if (!room) return
+    if (!room.adapter.isDanmakuWs(String(url))) return // 只认本平台的弹幕端点，避免页面内其他 WS 误判
     room.gotWsMeta = true
-    room.domMode = false // WS 连上后退出 DOM 兜底：帧 source 恢复 'ws'，迟到的 DOM 批次被守卫丢弃
+    room.domMode = false
     clearTimeout(room.watchdog)
     setStatus(room, 'connected')
     console.log('[wv] danmaku ws:', url)
   })
-  ipcMain.on(IPC.wvFrame, (e, data: Uint8Array) => {
-    const room = roomBySender(e.sender)
-    if (room) handleFrame(room, data)
-  })
+  onFrame(IPC.wvFrame)
+  onFrame(IPC.wvDouyinFrame)
+  onFrame(IPC.wvDouyinBody)
   ipcMain.on(IPC.wvDomMessages, (e, messages: Array<{ nickname: string; content: string }>) => {
     const room = roomBySender(e.sender)
-    if (!room || !room.domMode) return // WS 已接管后到达的 DOM 批次丢弃，防双源重复弹幕
+    if (!room || !room.domMode) return // 主通道已接管后到达的 DOM 批次丢弃，防双源重复弹幕
     for (const m of messages) {
       bus.publish({
-        id: `bili:${room.info.roomId}:${Date.now()}:${Math.abs(hash(m.content))}:${domSeq++}`,
-        platform: 'bilibili',
+        id: `dom:${room.info.platform}:${room.info.roomId}:${Date.now()}:${Math.abs(hash(m.content))}:${domSeq++}`,
+        platform: room.info.platform,
         roomId: room.info.roomId,
         type: 'chat',
         user: { uid: '', nickname: m.nickname },
@@ -197,7 +214,9 @@ export async function sendText(roomId: string, text: string): Promise<boolean> {
   const room = rooms.get(roomId)
   if (!room) return false
   try {
-    const result = (await room.view.webContents.executeJavaScript(buildSendScript(text))) as string
+    const result = (await room.view.webContents.executeJavaScript(
+      room.adapter.sendScript(text)
+    )) as string
     return result === 'queued'
   } catch (err) {
     console.error('[wv] sendText failed', err)
