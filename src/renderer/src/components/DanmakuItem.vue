@@ -1,7 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { DanmakuMessage } from '../../../shared/types'
-const props = defineProps<{ msg: DanmakuMessage }>()
+const props = withDefaults(defineProps<{ msg: DanmakuMessage; actionable?: boolean }>(), {
+  actionable: true
+})
+
+const busy = ref(false)
+const canReply = computed(
+  () => props.actionable && (props.msg.type === 'chat' || props.msg.type === 'gift')
+)
+
+async function askAi(): Promise<void> {
+  if (busy.value) return
+  busy.value = true
+  try {
+    await window.lda.manualReply(props.msg)
+  } finally {
+    busy.value = false
+  }
+}
 
 const cls = computed(() => ({
   chat: 'dm-item--chat',
@@ -23,6 +40,9 @@ const isQuestion = computed(() => /[？?]|吗|呢/.test(props.msg.content))
         <span class="dm-name">{{ msg.user.nickname }}</span>
         <span v-if="msg.user.medalLevel" class="dm-medal">Lv{{ msg.user.medalLevel }}</span>
         <span v-if="msg.source === 'dom'" class="dm-tag">兜底</span>
+        <button v-if="canReply" class="dm-ask" :disabled="busy" @click="askAi">
+          {{ busy ? '生成中…' : 'AI 回复' }}
+        </button>
       </div>
       <div class="dm-content">{{ msg.content }}</div>
       <div v-if="msg.type === 'gift'" class="dm-gift">🎁 {{ msg.gift?.name }} × {{ msg.gift?.count }}</div>
@@ -45,6 +65,13 @@ const isQuestion = computed(() => /[？?]|吗|呢/.test(props.msg.content))
 .dm-name { font-weight: 700; }
 .dm-medal { background: var(--accent); color: #fff; border: 1.5px solid var(--ink); border-radius: 4px; padding: 0 4px; font-size: 11px; }
 .dm-tag { border: 1.5px solid var(--ink); border-radius: 4px; padding: 0 4px; font-size: 11px; background: #fff; }
+.dm-ask {
+  margin-left: auto; font: inherit; font-size: 11px; padding: 1px 8px;
+  background: #fff; color: var(--ink); border: 1.5px solid var(--ink);
+  border-radius: 4px; cursor: pointer;
+}
+.dm-ask:hover { background: var(--accent); color: #fff; }
+.dm-ask:disabled { opacity: 0.5; cursor: progress; }
 .dm-content { margin-top: 2px; line-height: 1.4; word-break: break-all; }
 .dm-gift { font-size: 12px; margin-top: 2px; }
 </style>

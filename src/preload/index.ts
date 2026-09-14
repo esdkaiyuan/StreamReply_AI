@@ -1,8 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AddRoomResult,
+  AiLogEntry,
+  AiState,
   AppSettings,
   DanmakuMessage,
+  HistoryDanmaku,
+  HistoryQuery,
+  HistoryReply,
+  HistoryResult,
   ReplySnapshot,
   RoomInfo,
   RoomStatEvent
@@ -27,6 +33,18 @@ const api = {
   confirmReply: (id: string): Promise<void> => ipcRenderer.invoke(IPC.replyConfirm, id),
   rejectReply: (id: string): Promise<void> => ipcRenderer.invoke(IPC.replyReject, id),
   retryReply: (id: string): Promise<void> => ipcRenderer.invoke(IPC.replyRetry, id),
+  editReply: (id: string, text: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.replyEdit, id, text),
+  manualReply: (msg: DanmakuMessage): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.replyManual, msg),
+  manualSend: (roomId: string, text: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.manualSend, roomId, text),
+  onAiLog: (cb: (e: AiLogEntry) => void) => subscribe(IPC.aiLog, cb),
+  onAiState: (cb: (s: AiState) => void) => subscribe(IPC.aiState, cb),
+  queryDanmaku: (q: HistoryQuery = {}): Promise<HistoryResult<HistoryDanmaku>> =>
+    ipcRenderer.invoke(IPC.historyDanmaku, q),
+  queryReplies: (q: HistoryQuery = {}): Promise<HistoryResult<HistoryReply>> =>
+    ipcRenderer.invoke(IPC.historyReplies, q),
   toggleAi: (): Promise<boolean> => ipcRenderer.invoke(IPC.aiToggle),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsGet),
   setSettings: (patch: Partial<AppSettings>): Promise<AppSettings> =>
