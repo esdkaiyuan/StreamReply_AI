@@ -23,7 +23,8 @@ export function mapBilibiliEvent(
   const base = { platform: 'bilibili' as const, roomId, ts, source }
 
   if (cmd.startsWith('DANMU_MSG')) {
-    const info = payload as unknown[]
+    // 真实 WS 事件是 { cmd, info: [...] }，而单测直接传 info 数组，两种形态都要兼容
+    const info = (Array.isArray(payload) ? payload : (payload as { info?: unknown[] })?.info ?? []) as unknown[]
     const content = String(info?.[1] ?? '')
     const u = (info?.[2] ?? []) as unknown[]
     const medal = (info?.[3] ?? []) as unknown[]
