@@ -1,7 +1,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC } from '../../shared/types'
-import type { DanmakuMessage } from '../../shared/types'
+import type { DanmakuMessage, Platform } from '../../shared/types'
 import { openRoom, closeRoom, listRooms, bindMainWindow } from '../webview/webviewManager'
+import { detectPlatform } from '../adapters'
 import { bus } from '../webview/bus'
 import { parseRoomId } from './parseRoomId'
 
@@ -37,13 +38,15 @@ export function registerRoomIpc(win: BrowserWindow): void {
     }
   }, 10_000).unref()
 
-  ipcMain.handle(IPC.roomAdd, async (_e, input: string) => {
+  // platform 省略时按输入域名自动识别，识别不出按 B 站（一期行为）
+  ipcMain.handle(IPC.roomAdd, async (_e, input: string, platform?: Platform) => {
     const text = String(input ?? '').trim()
     if (!text) return { ok: false, error: '请输入直播间地址或房间号' }
     const roomId = parseRoomId(text)
     if (!roomId) return { ok: false, error: '无法从输入中解析房间号' }
+    const resolved = platform ?? detectPlatform(text) ?? 'bilibili'
     try {
-      await openRoom('bilibili', roomId)
+      await openRoom(resolved, roomId)
       return { ok: true }
     } catch (err) {
       closeRoom(roomId) // 清理已入表的会话，避免永久卡在「连接中」

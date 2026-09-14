@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
-import type { RoomInfo } from '../../../shared/types'
+import type { Platform, RoomInfo } from '../../../shared/types'
 
 export const useRoomStore = defineStore('rooms', {
   state: () => ({ rooms: [] as RoomInfo[] }),
   actions: {
     async refresh() { this.rooms = await window.lda.listRooms() },
-    async add(input: string) {
-      const res = await window.lda.addRoom(input)
+    async add(input: string, platform?: Platform) {
+      const res = await window.lda.addRoom(input, platform)
       await this.refresh()
       return res
     },

@@ -9,6 +9,7 @@ import type {
   HistoryQuery,
   HistoryReply,
   HistoryResult,
+  Platform,
   ReplySnapshot,
   RoomInfo,
   RoomStatEvent
@@ -22,8 +23,8 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api = {
-  addRoom: (input: string): Promise<AddRoomResult> =>
-    ipcRenderer.invoke(IPC.roomAdd, input),
+  addRoom: (input: string, platform?: Platform): Promise<AddRoomResult> =>
+    ipcRenderer.invoke(IPC.roomAdd, input, platform),
   removeRoom: (roomId: string): Promise<void> => ipcRenderer.invoke(IPC.roomRemove, roomId),
   listRooms: (): Promise<RoomInfo[]> => ipcRenderer.invoke(IPC.roomList),
   onDanmaku: (cb: (m: DanmakuMessage) => void) => subscribe(IPC.danmaku, cb),
