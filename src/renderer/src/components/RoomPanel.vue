@@ -17,14 +17,15 @@ const STATUS_DOT: Record<string, string> = {
   error: '#e05656', idle: '#999', closed: '#999'
 }
 const PLATFORM_LABEL: Record<string, string> = {
-  bilibili: 'B站', douyin: '抖音', kuaishou: '快手'
+  bilibili: 'B站', douyin: '抖音', kuaishou: '快手', douyu: '斗鱼'
 }
 
 const PLATFORMS: Array<{ value: Platform | 'auto'; label: string }> = [
   { value: 'auto', label: '自动识别' },
   { value: 'bilibili', label: 'B站' },
   { value: 'douyin', label: '抖音' },
-  { value: 'kuaishou', label: '快手' }
+  { value: 'kuaishou', label: '快手' },
+  { value: 'douyu', label: '斗鱼' }
 ]
 
 async function add(): Promise<void> {

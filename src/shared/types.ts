@@ -1,4 +1,4 @@
-export type Platform = 'bilibili' | 'douyin' | 'kuaishou'
+export type Platform = 'bilibili' | 'douyin' | 'kuaishou' | 'douyu'
 export type DanmakuType = 'chat' | 'enter' | 'gift' | 'like' | 'follow' | 'share'
 export type CaptureSource = 'ws' | 'dom'
 export type RoomStatus = 'idle' | 'loading' | 'connected' | 'fallback-dom' | 'error' | 'closed'
@@ -56,6 +56,7 @@ export const IPC = {
   wvDouyinFrame: 'wv:dy-frame',
   wvDouyinBody: 'wv:dy-body',
   wvKuaishouFrame: 'wv:ks-frame',
+  wvDouyuFrame: 'wv:douyu-frame',
   replyUpdate: 'reply:update',
   replyConfirm: 'reply:confirm',
   replyReject: 'reply:reject',
@@ -73,6 +74,19 @@ export const IPC = {
 } as const
 
 export interface AddRoomResult { ok: boolean; error?: string }
+
+/**
+ * 抓取通道注册表：注入脚本 postMessage 的 `__LDA__` 标签 → 主进程 IPC 通道 + 单帧字节上限。
+ * 新增平台只需在适配器的注入脚本里用一个新标签，并在这里登记一行即可，
+ * preload 路由与主进程监听都是遍历本表，不必再逐个平台改代码。
+ */
+export const FRAME_CHANNELS: Record<string, { channel: string; maxBytes: number }> = {
+  'ws-frame': { channel: 'wv:frame', maxBytes: 1024 * 1024 },
+  'dy-frame': { channel: 'wv:dy-frame', maxBytes: 4 * 1024 * 1024 },
+  'dy-body': { channel: 'wv:dy-body', maxBytes: 16 * 1024 * 1024 },
+  'ks-frame': { channel: 'wv:ks-frame', maxBytes: 4 * 1024 * 1024 },
+  'douyu-frame': { channel: 'wv:douyu-frame', maxBytes: 1024 * 1024 }
+}
 
 export type Emotion = 'answer' | 'thanks' | 'greet' | 'tease' | 'comfort'
 export type ReplyStatus = 'pending-confirm' | 'queued' | 'sending' | 'sent' | 'failed' | 'rejected'

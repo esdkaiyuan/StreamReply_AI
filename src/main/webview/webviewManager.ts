@@ -1,7 +1,7 @@
 import { WebContentsView, ipcMain, BrowserWindow } from 'electron'
 import { join } from 'path'
 import type { Platform, RoomInfo, RoomStatus } from '../../shared/types'
-import { IPC } from '../../shared/types'
+import { FRAME_CHANNELS, IPC } from '../../shared/types'
 import { getAdapter, type PlatformAdapter } from '../adapters'
 import { bus } from './bus'
 
@@ -168,10 +168,8 @@ function ensureIpcRoutes(): void {
     setStatus(room, 'connected')
     console.log('[wv] danmaku ws:', url)
   })
-  onFrame(IPC.wvFrame)
-  onFrame(IPC.wvDouyinFrame)
-  onFrame(IPC.wvDouyinBody)
-  onFrame(IPC.wvKuaishouFrame)
+  // 遍历抓取通道注册表：新增平台无需改动这里
+  for (const { channel } of Object.values(FRAME_CHANNELS)) onFrame(channel)
   ipcMain.on(IPC.wvDomMessages, (e, messages: Array<{ nickname: string; content: string }>) => {
     const room = roomBySender(e.sender)
     if (!room || !room.domMode) return // 主通道已接管后到达的 DOM 批次丢弃，防双源重复弹幕
