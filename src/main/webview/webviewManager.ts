@@ -28,14 +28,25 @@ function setStatus(room: RoomSession, status: RoomStatus): void {
   mainWindow?.webContents.send(IPC.roomStatusChanged, room.info)
 }
 
-/** 收到任意一帧可解析数据即视为抓取成功（不依赖平台是否走 WebSocket） */
+/**
+ * 只有「真正解析出可用的帧」才算抓取成功。
+ * 不能拿「发现了弹幕 WS 端点」当连上的依据——同一主机上还跑着 WebRTC 信令等无关连接，
+ * 那样会显示「在线」却一条弹幕都没有，比如实报兜底更有误导性。
+ */
 function markCaptured(room: RoomSession): void {
-  if (!room.gotWsMeta) {
-    room.gotWsMeta = true
-    room.domMode = false // 主通道生效后退出兜底，DOM 批次由 domMode 守卫生效
-    setStatus(room, 'connected')
-  }
+  room.gotWsMeta = true
+  room.domMode = false // 主通道生效后退出兜底，DOM 批次由 domMode 守卫生效
+  setStatus(room, 'connected')
   clearTimeout(room.watchdog)
+}
+
+/** 已识别到弹幕端点但迟迟没有帧 → 交给 DOM 兜底（传输方式无关） */
+function armFrameWatchdog(room: RoomSession, delayMs = 10_000): void {
+  clearTimeout(room.watchdog)
+  room.watchdog = setTimeout(() => {
+    if (room.domMode) return
+    startDomFallback(room)
+  }, delayMs)
 }
 
 function handleFrame(room: RoomSession, data: Uint8Array): void {
@@ -163,10 +174,9 @@ function ensureIpcRoutes(): void {
     if (!room) return
     if (!room.adapter.isDanmakuWs(String(url))) return // 只认本平台的弹幕端点，避免页面内其他 WS 误判
     room.gotWsMeta = true
-    room.domMode = false
-    clearTimeout(room.watchdog)
-    setStatus(room, 'connected')
-    console.log('[wv] danmaku ws:', url)
+    console.log('[wv] 识别到弹幕端点，等待首帧:', url)
+    // 已挂上端点但 10 秒内没有任何帧 → 走 DOM 兜底，不假装已连上
+    armFrameWatchdog(room)
   })
   // 遍历抓取通道注册表：新增平台无需改动这里
   for (const { channel } of Object.values(FRAME_CHANNELS)) onFrame(channel)

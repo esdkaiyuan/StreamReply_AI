@@ -67,8 +67,29 @@ describe('bilibili adapter（重构回归）', () => {
     expect(result.danmaku).toEqual([])
   })
 
+  it('纯 JSON 文本帧也能解析（网页端直推 JSON 的场景）', () => {
+    const json = JSON.stringify({
+      cmd: 'DANMU_MSG',
+      info: [[], '文本帧弹幕', [7, '文本观众', '', 0, 0, 0, '', 0], ['粉丝团', 5]]
+    })
+    const result = bilibiliAdapter.parseFrame(Buffer.from(json, 'utf8'), '22637261', 'ws')
+    expect(result.danmaku).toHaveLength(1)
+    expect(result.danmaku[0].content).toBe('文本帧弹幕')
+    expect(result.danmaku[0].user.nickname).toBe('文本观众')
+  })
+
+  it('无 cmd 的 JSON（如同主机的 WebRTC 信令帧）不产出弹幕', () => {
+    const json = JSON.stringify({ type: 'request', action: 'connect', data: { nat: 'sym' } })
+    expect(bilibiliAdapter.parseFrame(Buffer.from(json, 'utf8'), '1', 'ws').danmaku).toEqual([])
+    expect(bilibiliAdapter.parseFrame(Buffer.from('not json at all {'), '1', 'ws').danmaku).toEqual([])
+  })
+
   it('WS 端点判定与 DOM 兜底脚本仍在', () => {
     expect(bilibiliAdapter.isDanmakuWs('wss://broadcastlv.chat.bilibili.com/sub')).toBe(true)
+    // 实测：当前网页端弹幕主机是这个（同一主机也承载 WebRTC 信令）
+    expect(
+      bilibiliAdapter.isDanmakuWs('wss://cn-hnld-ccc-live-tracker-01.chat.bilibili.com/?roomid=1')
+    ).toBe(true)
     expect(bilibiliAdapter.isDanmakuWs('wss://webcast.douyin.com/webcast/im/push/')).toBe(false)
     expect(bilibiliAdapter.domFallbackScript()).toBeTruthy()
   })
