@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "dev:nogpu": "electron-vite dev -- --no-gpu",
+    "dev:restricted": "electron-vite dev -- --no-gpu --no-sandbox",
     "build": "electron-vite build",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && vue-tsc --noEmit -p tsconfig.web.json",

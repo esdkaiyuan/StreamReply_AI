@@ -20,6 +20,19 @@ if (process.argv.includes('--no-gpu') || process.env['LDA_NO_GPU'] === '1') {
   app.commandLine.appendSwitch('in-process-gpu')
 }
 
+/**
+ * 受限环境（虚拟机 / 沙箱）里 Chromium 的渲染进程沙箱会直接被杀掉
+ * （表现为 WebContentsView 的 render-process-gone reason=killed，
+ *  进而 loadURL 报 ERR_FAILED），此时需要全局关闭渲染进程沙箱。
+ *
+ * ⚠️ 这会削弱第三方直播间页面的隔离强度，**仅限开发环境使用**，务必显式提示。
+ */
+if (process.argv.includes('--no-sandbox')) {
+  console.warn(
+    '[security] Chromium 渲染进程沙箱已禁用（--no-sandbox）——仅限受限环境开发使用，请勿用于正式分发'
+  )
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 1080, minHeight: 640,
