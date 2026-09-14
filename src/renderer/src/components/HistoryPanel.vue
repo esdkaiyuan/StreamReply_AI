@@ -101,8 +101,7 @@ onMounted(async () => {
     </div>
 
     <p v-if="!available" class="hp-note">
-      历史库不可用：better-sqlite3 未针对当前 Electron 重建，数据未落盘。运行
-      <code>npm run rebuild</code> 后重启即可启用。
+      历史库不可用：本地数据库文件打开失败，弹幕未落盘。可查看主进程日志确认原因。
     </p>
 
     <div class="hp-list">

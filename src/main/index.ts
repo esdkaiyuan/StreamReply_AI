@@ -19,15 +19,15 @@ function createWindow(): BrowserWindow {
 }
 
 /**
- * 动态 import：better-sqlite3 是原生模块，未针对当前 Electron ABI 重建时
- * require 会直接抛错，静态导入会带崩整个主进程，故隔离并降级为「不落盘」。
+ * node:sqlite 目前仍是实验特性，且库文件可能因权限/磁盘问题打不开；
+ * 用动态 import + try/catch 隔离，失败只降级为「不落盘」，不带崩主进程。
  */
 async function openDb(): Promise<DbStore | null> {
   try {
     const mod = await import('./db/store')
     return new mod.DbStore(join(app.getPath('userData'), 'danmaku.db'))
   } catch (err) {
-    console.warn('[db] 原生模块不可用，历史留档已禁用：', err)
+    console.warn('[db] 历史库不可用，留档已禁用：', err)
     return null
   }
 }

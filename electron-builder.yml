@@ -2,15 +2,12 @@ appId: com.aesdnew.live-danmaku-assistant
 productName: 直播弹幕助手
 directories:
   output: release/${version}
-# 本机无 VS 构建工具时跳过原生模块重建；有 VS 的机器可改回 true 或先执行 npm run rebuild
-npmRebuild: false
-electronDownload:
-  mirror: https://npmmirror.com/mirrors/electron/
+# 无原生模块依赖（SQLite 走内置 node:sqlite），无需 electron-rebuild
 files:
   - out/**
   - package.json
-asarUnpack:
-  - '**/*.node'
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
 win:
   target: nsis
   artifactName: ${productName}-${version}-${arch}.${ext}
