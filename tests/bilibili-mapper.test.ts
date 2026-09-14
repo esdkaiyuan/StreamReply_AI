@@ -24,6 +24,17 @@ describe('bilibili mapper', () => {
     expect(msg!.source).toBe('ws')
   })
 
+  it('真实 WS 形态 { cmd, info } 也能取到弹幕内容（回归）', () => {
+    const event = {
+      cmd: 'DANMU_MSG:4:0:2:2:2:0',
+      info: [[], '来自真实帧的内容', [999, '真观众', '', 0, 0, 0, '', 0], ['粉丝团', 3]]
+    }
+    const msg = mapBilibiliEvent(event.cmd, event, '10086', 'ws') as DanmakuMessage | null
+    expect(msg!.content).toBe('来自真实帧的内容')
+    expect(msg!.user.nickname).toBe('真观众')
+    expect(msg!.user.medalLevel).toBe(3)
+  })
+
   it('INTERACT_WORD 映射为 enter', () => {
     const msg = mapBilibiliEvent(
       'INTERACT_WORD',
