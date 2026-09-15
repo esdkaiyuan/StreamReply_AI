@@ -19,6 +19,16 @@ export const bilibiliAdapter: PlatformAdapter = {
   domFallbackScript: () => DOM_OBSERVER_SCRIPT,
 
   /**
+   * 主进程直连弹幕服务器。
+   * 动态 import：`./direct` 依赖 electron（net），而适配器会被单测直接引用，
+   * 动态加载可保证测试环境永不触碰 electron。
+   */
+  createDirectCapture: async (roomId, hooks) => {
+    const { createBilibiliDirect } = await import('./direct')
+    return createBilibiliDirect(roomId, hooks)
+  },
+
+  /**
    * WS 端点判定。
    * 实测：当前网页端弹幕主机是 `*.chat.bilibili.com`，历史/长连接为 `broadcastlv`。
    */

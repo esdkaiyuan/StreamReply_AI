@@ -1,8 +1,8 @@
 import { WebContentsView, ipcMain, BrowserWindow } from 'electron'
 import { join } from 'path'
-import type { Platform, RoomInfo, RoomStatus } from '../../shared/types'
+import type { CaptureSource, Platform, RoomInfo, RoomStatus, SendResult } from '../../shared/types'
 import { FRAME_CHANNELS, IPC } from '../../shared/types'
-import { getAdapter, type PlatformAdapter } from '../adapters'
+import { getAdapter, type DirectClient, type DirectHooks, type PlatformAdapter } from '../adapters'
 import { bus } from './bus'
 
 interface RoomSession {
@@ -13,6 +13,8 @@ interface RoomSession {
   domMode: boolean
   retryCount: number
   watchdog: NodeJS.Timeout
+  /** 主进程直连抓取客户端；非空时它是弹幕帧的唯一来源，页面侧信号一律忽略 */
+  direct: DirectClient | null
 }
 
 const rooms = new Map<string, RoomSession>()
@@ -49,8 +51,14 @@ function armFrameWatchdog(room: RoomSession, delayMs = 10_000): void {
   }, delayMs)
 }
 
-function handleFrame(room: RoomSession, data: Uint8Array): void {
-  const source = room.domMode ? 'dom' : 'ws'
+function emitStat(room: RoomSession, onlineCount: number): void {
+  mainWindow?.webContents.send(
+    IPC.roomStat,
+    bus.buildStat(room.info.platform, room.info.roomId, onlineCount)
+  )
+}
+
+function handleFrame(room: RoomSession, data: Uint8Array, source: CaptureSource): void {
   let result: ReturnType<PlatformAdapter['parseFrame']>
   try {
     result = room.adapter.parseFrame(Buffer.from(data), room.info.roomId, source)
@@ -61,12 +69,7 @@ function handleFrame(room: RoomSession, data: Uint8Array): void {
   if (result.danmaku.length === 0 && result.onlineCount === undefined) return
   markCaptured(room)
   for (const msg of result.danmaku) bus.publish(msg)
-  if (result.onlineCount !== undefined) {
-    mainWindow?.webContents.send(
-      IPC.roomStat,
-      bus.buildStat(room.info.platform, room.info.roomId, result.onlineCount)
-    )
-  }
+  if (result.onlineCount !== undefined) emitStat(room, result.onlineCount)
 }
 
 function startDomFallback(room: RoomSession): void {
@@ -106,7 +109,8 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
     gotWsMeta: false,
     domMode: false,
     retryCount: 0,
-    watchdog: null as unknown as NodeJS.Timeout
+    watchdog: null as unknown as NodeJS.Timeout,
+    direct: null
   }
   rooms.set(roomId, session)
 
@@ -115,10 +119,13 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   if (host) host.contentView.addChildView(view)
   view.setBounds({ x: -20000, y: 0, width: 1280, height: 800 })
 
+  /** 房间仍在册时才改状态/推事件（防止已关闭房间的迟到回调污染 UI） */
+  const alive = (): boolean => rooms.get(roomId) === session
+
   const armWatchdog = (): void => {
     clearTimeout(session.watchdog)
     session.watchdog = setTimeout(() => {
-      if (session.gotWsMeta || session.domMode) return
+      if (session.gotWsMeta || session.domMode || session.direct) return
       if (session.retryCount < 1) {
         session.retryCount += 1
         view.webContents.reload()
@@ -130,12 +137,15 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   }
 
   view.webContents.on('dom-ready', async () => {
+    // 直连模式下页面只承担「发送」职责，不注入 WS hook，避免与直连形成双源
+    if (session.direct) return
     await view.webContents.executeJavaScript(adapter.injectScript()).catch(() => 'inject-failed')
   })
 
   view.webContents.on('render-process-gone', (_e, details) => {
     console.error('[wv] renderer gone', details.reason)
-    setStatus(session, 'error')
+    // 直连模式下抓取不依赖页面，页面挂了只影响发送，不该把房间判死
+    if (alive() && !session.direct) setStatus(session, 'error')
   })
 
   // 直播间页面弹新窗一律拒绝
@@ -143,6 +153,53 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
 
   ensureIpcRoutes()
 
+  // ① 优先：主进程直连弹幕服务器——不依赖页面传输层，绕开「连接建在 Worker 内」
+  if (adapter.createDirectCapture) {
+    const hooks: DirectHooks = {
+      onAuthOk: (serverHost) => {
+        if (!alive()) return
+        console.log('[wv] 直连鉴权通过，已连上弹幕服务器:', serverHost)
+        setStatus(session, 'connected')
+      },
+      onFrame: (raw) => {
+        if (alive()) handleFrame(session, raw, 'ws')
+      },
+      onPopularity: (count) => {
+        if (alive()) emitStat(session, count)
+      },
+      onError: (message) => {
+        if (!alive()) return
+        console.warn('[wv] 直连抓取不可用，退回 DOM 观察:', message)
+        session.direct?.stop()
+        session.direct = null
+        startDomFallback(session)
+      },
+      onLog: (level, message) => console.log(`[wv][direct:${level}] ${message}`)
+    }
+    try {
+      session.direct = await adapter.createDirectCapture(roomId, hooks)
+    } catch (err) {
+      console.warn('[wv] 直连模式初始化失败，退回页面注入:', String(err))
+      session.direct = null
+    }
+    if (session.direct) {
+      session.direct.start()
+      // 直连仍可收弹幕，页面加载失败只影响「发送」；重试一次后如实记录，不判死整条链路
+      try {
+        await view.webContents.loadURL(adapter.roomUrl(roomId))
+      } catch (err) {
+        console.warn('[wv] 直连模式下页面加载失败，重试一次:', String(err))
+        try {
+          await view.webContents.loadURL(adapter.roomUrl(roomId))
+        } catch (retryErr) {
+          console.warn('[wv] 页面重试仍失败（仅影响发送，抓取不受影响）:', String(retryErr))
+        }
+      }
+      return
+    }
+  }
+
+  // ② 兜底：页面注入 + DOM 观察（抖音/快手/斗鱼/虎牙当前走这条）
   armWatchdog()
   await view.webContents.loadURL(adapter.roomUrl(roomId))
 }
@@ -158,7 +215,8 @@ function ensureIpcRoutes(): void {
   const onFrame = (channel: string): void => {
     ipcMain.on(channel, (e, data: Uint8Array) => {
       const room = roomBySender(e.sender)
-      if (room) handleFrame(room, data)
+      if (!room || room.direct) return // 直连模式下页面帧一律不采信
+      handleFrame(room, data, room.domMode ? 'dom' : 'ws')
     })
   }
 
@@ -171,7 +229,7 @@ function ensureIpcRoutes(): void {
   })
   ipcMain.on(IPC.wvWsMeta, (e, url: string) => {
     const room = roomBySender(e.sender)
-    if (!room) return
+    if (!room || room.direct) return // 直连已接管时忽略页面端点信号
     if (!room.adapter.isDanmakuWs(String(url))) return // 只认本平台的弹幕端点，避免页面内其他 WS 误判
     room.gotWsMeta = true
     console.log('[wv] 识别到弹幕端点，等待首帧:', url)
@@ -182,7 +240,7 @@ function ensureIpcRoutes(): void {
   for (const { channel } of Object.values(FRAME_CHANNELS)) onFrame(channel)
   ipcMain.on(IPC.wvDomMessages, (e, messages: Array<{ nickname: string; content: string }>) => {
     const room = roomBySender(e.sender)
-    if (!room || !room.domMode) return // 主通道已接管后到达的 DOM 批次丢弃，防双源重复弹幕
+    if (!room || !room.domMode || room.direct) return // 主通道已接管后到达的 DOM 批次丢弃，防双源重复弹幕
     for (const m of messages) {
       bus.publish({
         id: `dom:${room.info.platform}:${room.info.roomId}:${Date.now()}:${Math.abs(hash(m.content))}:${domSeq++}`,
@@ -208,9 +266,10 @@ export function closeRoom(roomId: string): void {
   const room = rooms.get(roomId)
   if (!room) return
   clearTimeout(room.watchdog)
+  rooms.delete(roomId) // 先摘除，后续任何迟到回调都会被 alive() 拦住
+  room.direct?.stop()
   if (mainWindow) mainWindow.contentView.removeChildView(room.view)
   void room.view.webContents.close()
-  rooms.delete(roomId)
   setStatus(room, 'closed')
 }
 
@@ -218,17 +277,46 @@ export function listRooms(): RoomInfo[] {
   return Array.from(rooms.values()).map((r) => ({ ...r.info }))
 }
 
-/** 向指定房间发送弹幕；找不到输入框视为失败（触发调度器熔断计数） */
-export async function sendText(roomId: string, text: string): Promise<boolean> {
+/**
+ * 重载所有房间页面。
+ * 登录态变化后必须调用：Cookie 变了但页面不会自己重新渲染，
+ * 游客态→登录态才有弹幕输入框，发送链路才可能成功。
+ */
+export function reloadAllRooms(): void {
+  for (const room of rooms.values()) {
+    try {
+      room.view.webContents.reload()
+    } catch (err) {
+      console.warn('[wv] 重载房间页面失败:', String(err))
+    }
+  }
+}
+
+/** 页面脚本的失败码 → 可自助解决的中文说明（不要笼统说「未找到输入框」） */
+const SEND_FAIL_REASON: Record<string, string> = {
+  'page-not-ready': '直播间页面尚未加载完成，请稍后重试',
+  'need-login': '当前页面是游客态，B 站不渲染弹幕输入框 —— 请先在顶部「👤 账号」登录',
+  'no-input': '未找到弹幕输入框（可能是非直播间页面，或该房间不支持发言）',
+  'no-setter': '找到输入框但类型不受支持，无法写入文本',
+  'send-failed': '已填入文本但未找到发送按钮'
+}
+
+/** 向指定房间发送弹幕；失败时给出可读原因（触发调度器熔断计数） */
+export async function sendText(roomId: string, text: string): Promise<SendResult> {
   const room = rooms.get(roomId)
-  if (!room) return false
+  if (!room) return { ok: false, reason: '房间不存在或已关闭' }
+  // 页面没加载完就注入脚本，只会白白计一次熔断失败
+  if (room.view.webContents.isLoading()) {
+    return { ok: false, reason: '直播间页面正在加载，请稍后重试' }
+  }
   try {
     const result = (await room.view.webContents.executeJavaScript(
       room.adapter.sendScript(text)
     )) as string
-    return result === 'queued'
+    if (result === 'queued') return { ok: true }
+    return { ok: false, reason: SEND_FAIL_REASON[result] ?? `发送脚本返回未知结果：${result}` }
   } catch (err) {
     console.error('[wv] sendText failed', err)
-    return false
+    return { ok: false, reason: `执行发送脚本异常：${String(err)}` }
   }
 }

@@ -20,12 +20,12 @@ async function send(): Promise<void> {
   if (!roomId.value || !content || sending.value) return
   sending.value = true
   try {
-    const ok = await window.lda.manualSend(roomId.value, content)
-    if (ok) {
+    const res = await window.lda.manualSend(roomId.value, content)
+    if (res.ok) {
       text.value = ''
       hint.value = '已发送'
     } else {
-      hint.value = '发送失败：未找到输入框，请确认直播间已打开并登录'
+      hint.value = `发送失败：${res.reason ?? '未知原因'}`
     }
   } finally {
     sending.value = false

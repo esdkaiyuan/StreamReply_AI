@@ -52,7 +52,7 @@ export function decodeBody(packet: RawPacket): Buffer[] {
   return [] // protover 1(人气心跳)/2(旧zlib，已弃用) 由调用方另行处理
 }
 
-/** 仅测试用：按协议构造一帧（vitest 直接引用，生产代码勿用） */
+/** 按协议构造一帧数据 */
 export function buildPacket(op: number, protover: number, body: Buffer): Buffer {
   const head = Buffer.alloc(HEADER_LEN)
   head.writeUInt32BE(HEADER_LEN + body.length, 0)
@@ -61,4 +61,60 @@ export function buildPacket(op: number, protover: number, body: Buffer): Buffer 
   head.writeUInt32BE(op, 8)
   head.writeUInt32BE(1, 12)
   return Buffer.concat([head, body])
+}
+
+/** 心跳包（op=2，空体），主进程直连时按周期发送 */
+export function heartbeatPacket(): Buffer {
+  return buildPacket(OP.HEARTBEAT, 1, Buffer.alloc(0))
+}
+
+/**
+ * 鉴权包体（op=7）。
+ * `protover: 3` 要求服务端用 brotli 压缩弹幕数据；`uid: 0` 为游客态，
+ * 实测游客 + 匿名 buvid 即可正常接收弹幕。
+ */
+export function buildAuthBody(p: {
+  roomId: string | number
+  token: string
+  buvid?: string
+  uid?: number
+}): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      uid: p.uid ?? 0,
+      roomid: Number(p.roomId),
+      protover: 3,
+      buvid: p.buvid ?? '',
+      platform: 'web',
+      type: 2,
+      key: p.token
+    })
+  )
+}
+
+/**
+ * 从心跳应答（op=3）里读人气值。
+ * 线上为 4 字节大端；个别服务端会发 8 字节且只有一侧有值，故两侧都试。
+ */
+export function readPopularity(packet: RawPacket): number | undefined {
+  const body = packet.body
+  if (body.length < 4) return undefined
+  const first = body.readUInt32BE(0)
+  if (body.length >= 8) return first || body.readUInt32BE(body.length - 4)
+  return first
+}
+
+/** 从鉴权应答（op=8）里读 code：0 表示通过，非 0 表示被拒（如 -101 未登录 / 101 token 失效） */
+export function readAuthCode(packet: RawPacket): number | undefined {
+  const bodies = packet.protover === 3 ? decodeBody(packet) : [packet.body]
+  for (const body of bodies) {
+    if (!body.length) continue
+    try {
+      const parsed = JSON.parse(body.toString('utf8')) as { code?: unknown }
+      if (typeof parsed?.code === 'number') return parsed.code
+    } catch {
+      /* 非法 JSON（空体/心跳体）跳过 */
+    }
+  }
+  return undefined
 }

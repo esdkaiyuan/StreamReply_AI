@@ -5,6 +5,7 @@ import { loadSettings } from './settings'
 import { startReplyPipeline, rebindReplyWindow } from './ai/pipeline'
 import type { DbStore } from './db/store'
 import { registerHistoryIpc } from './db/historyIpc'
+import { registerAuthIpc } from './auth/ipc'
 
 /**
  * 无可用 GPU 的环境（虚拟机 / 远程桌面 / CI / 沙箱）里，Chromium 的 GPU 进程会反复崩溃并
@@ -62,6 +63,7 @@ async function openDb(): Promise<DbStore | null> {
 app.whenReady().then(async () => {
   const win = createWindow()
   registerRoomIpc(win)
+  registerAuthIpc(win)
   const db = await openDb()
   registerHistoryIpc(() => db)
   startReplyPipeline(win, loadSettings(), db)

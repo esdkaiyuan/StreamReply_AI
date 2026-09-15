@@ -69,13 +69,15 @@ export function startReplyPipeline(
       return settings.get('requireConfirm')
     },
     sender: async (task) => {
-      const ok = await sendText(task.roomId, task.text)
-      db?.saveReply({ ...task, status: ok ? 'sent' : 'failed', sentAt: Date.now() })
+      const result = await sendText(task.roomId, task.text)
+      db?.saveReply({ ...task, status: result.ok ? 'sent' : 'failed', sentAt: Date.now() })
       log(
-        ok ? 'info' : 'error',
-        ok ? `已发送给 ${task.replyTo}：${task.text}` : `发送失败（未找到输入框或页面异常）：${task.text}`
+        result.ok ? 'info' : 'error',
+        result.ok
+          ? `已发送给 ${task.replyTo}：${task.text}`
+          : `发送失败（${result.reason ?? '未知原因'}）：${task.text}`
       )
-      return ok
+      return result.ok
     },
     onEvent: () => pushSnapshot()
   })
@@ -117,9 +119,9 @@ export function startReplyPipeline(
   /** 手动发弹幕：用户显式操作，直接发，不再排队 */
   ipcMain.handle(IPC.manualSend, async (_e, roomId: string, text: string) => {
     const content = String(text ?? '').trim()
-    if (!content) return false
-    const ok = await sendText(String(roomId), content)
-    if (ok) {
+    if (!content) return { ok: false, reason: '内容为空' }
+    const result = await sendText(String(roomId), content)
+    if (result.ok) {
       db?.saveReply({
         id: randomUUID(),
         roomId: String(roomId),
@@ -132,8 +134,11 @@ export function startReplyPipeline(
         sentAt: Date.now()
       })
     }
-    log(ok ? 'info' : 'error', ok ? `手动发送成功：${content}` : `手动发送失败：${content}`)
-    return ok
+    log(
+      result.ok ? 'info' : 'error',
+      result.ok ? `手动发送成功：${content}` : `手动发送失败（${result.reason ?? '未知原因'}）：${content}`
+    )
+    return result
   })
 
   ipcMain.handle(IPC.replyConfirm, (_e, id: string) => {

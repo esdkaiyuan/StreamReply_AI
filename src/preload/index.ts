@@ -9,10 +9,14 @@ import type {
   HistoryQuery,
   HistoryReply,
   HistoryResult,
+  LoginState,
   Platform,
+  QrPollResult,
+  QrSession,
   ReplySnapshot,
   RoomInfo,
-  RoomStatEvent
+  RoomStatEvent,
+  SendResult
 } from '../shared/types'
 import { IPC } from '../shared/types'
 
@@ -38,7 +42,7 @@ const api = {
     ipcRenderer.invoke(IPC.replyEdit, id, text),
   manualReply: (msg: DanmakuMessage): Promise<boolean> =>
     ipcRenderer.invoke(IPC.replyManual, msg),
-  manualSend: (roomId: string, text: string): Promise<boolean> =>
+  manualSend: (roomId: string, text: string): Promise<SendResult> =>
     ipcRenderer.invoke(IPC.manualSend, roomId, text),
   onAiLog: (cb: (e: AiLogEntry) => void) => subscribe(IPC.aiLog, cb),
   onAiState: (cb: (s: AiState) => void) => subscribe(IPC.aiState, cb),
@@ -47,6 +51,15 @@ const api = {
   queryReplies: (q: HistoryQuery = {}): Promise<HistoryResult<HistoryReply>> =>
     ipcRenderer.invoke(IPC.historyReplies, q),
   toggleAi: (): Promise<boolean> => ipcRenderer.invoke(IPC.aiToggle),
+  getLoginState: (): Promise<LoginState> => ipcRenderer.invoke(IPC.authState),
+  onLoginChanged: (cb: (s: LoginState) => void) => subscribe(IPC.authChanged, cb),
+  startQrLogin: (): Promise<{ ok: true; session: QrSession } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.authQrStart),
+  pollQrLogin: (key: string): Promise<QrPollResult> => ipcRenderer.invoke(IPC.authQrPoll, key),
+  loginWithCookie: (raw: string): Promise<LoginState & { error?: string }> =>
+    ipcRenderer.invoke(IPC.authCookieSet, raw),
+  openLoginWindow: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.authOpenLoginWindow),
+  logout: (): Promise<LoginState> => ipcRenderer.invoke(IPC.authLogout),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsGet),
   setSettings: (patch: Partial<AppSettings>): Promise<AppSettings> =>
     ipcRenderer.invoke(IPC.settingsSet, patch)

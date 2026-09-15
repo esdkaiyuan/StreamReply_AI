@@ -70,11 +70,24 @@ export const IPC = {
   manualSend: 'manual:send',
   historyDanmaku: 'history:danmaku',
   historyReplies: 'history:replies',
+  authState: 'auth:state',
+  authChanged: 'auth:changed',
+  authQrStart: 'auth:qr-start',
+  authQrPoll: 'auth:qr-poll',
+  authCookieSet: 'auth:cookie-set',
+  authOpenLoginWindow: 'auth:open-login-window',
+  authLogout: 'auth:logout',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set'
 } as const
 
 export interface AddRoomResult { ok: boolean; error?: string }
+
+/** 发送结果。失败必须带可自助解决的原因，不要笼统报「失败」 */
+export interface SendResult {
+  ok: boolean
+  reason?: string
+}
 
 /**
  * 抓取通道注册表：注入脚本 postMessage 的 `__LDA__` 标签 → 主进程 IPC 通道 + 单帧字节上限。
@@ -180,4 +193,35 @@ export interface ReplySnapshot {
   history: ReplyTask[]
   sentLastMinute: number
   sentLastHour: number
+}
+
+/* --------------------------------------------------------------- 账号登录 */
+
+/**
+ * 登录态。抓取弹幕**不需要**登录（匿名直连即可收到弹幕），
+ * 但发送弹幕必须登录：游客态页面根本不渲染输入框。
+ */
+export interface LoginState {
+  isLogin: boolean
+  uid?: number
+  uname?: string
+  /** 当前登录方式 */
+  via?: 'cookie' | 'qr' | 'window'
+  /** 缺失的关键 Cookie（如 bili_jct）：能收弹幕但发不出去 */
+  missingCookies?: string[]
+}
+
+/** 扫码流程阶段 */
+export type QrPhase = 'waiting-scan' | 'scanned' | 'confirmed' | 'expired' | 'error'
+
+export interface QrSession {
+  qrDataUrl: string
+  key: string
+  expiresAt: number
+}
+
+export interface QrPollResult {
+  phase: QrPhase
+  message?: string
+  state?: LoginState
 }

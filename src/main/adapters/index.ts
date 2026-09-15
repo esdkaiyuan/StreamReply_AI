@@ -1,9 +1,12 @@
 import type { CaptureSource, DanmakuMessage, Platform } from '../../shared/types'
 import { bilibiliAdapter } from './bilibili'
+import type { DirectClient, DirectHooks } from './bilibili/directClient'
 import { douyinAdapter } from './douyin'
 import { douyuAdapter } from './douyu'
 import { huyaAdapter } from './huya'
 import { kuaishouAdapter } from './kuaishou'
+
+export type { DirectClient, DirectHooks } from './bilibili/directClient'
 
 export interface FrameResult {
   danmaku: DanmakuMessage[]
@@ -27,6 +30,11 @@ export interface PlatformAdapter {
   parseFrame(raw: Buffer, roomId: string, source: CaptureSource): FrameResult
   /** 在页面内模拟输入并发送 */
   sendScript(text: string): string
+  /**
+   * 主进程直连抓取（不依赖页面传输层）。返回 null 表示平台不支持。
+   * 支持时优先于页面注入路径，用于绕开「连接建在 Worker 内」等场景。
+   */
+  createDirectCapture?(roomId: string, hooks: DirectHooks): Promise<DirectClient | null>
 }
 
 const registry: Record<Platform, PlatformAdapter | null> = {

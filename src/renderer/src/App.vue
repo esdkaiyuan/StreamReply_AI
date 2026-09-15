@@ -5,6 +5,7 @@ import DanmakuList from './components/DanmakuList.vue'
 import ReplyPanel from './components/ReplyPanel.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
+import LoginPanel from './components/LoginPanel.vue'
 import { useAiStore } from './stores/ai'
 import { useDanmakuStore } from './stores/danmaku'
 import { useRoomStore } from './stores/rooms'
@@ -32,7 +33,10 @@ onMounted(() => {
       <span class="logo">🎈 直播弹幕助手</span>
       <span class="stat">⚡ {{ rate }}/分钟</span>
       <span class="stat">👥 {{ online ?? '--' }}</span>
-      <div class="topbar__settings"><SettingsDrawer /></div>
+      <div class="topbar__settings">
+        <LoginPanel />
+        <SettingsDrawer />
+      </div>
     </header>
     <aside class="glass-card sidebar"><RoomPanel /></aside>
     <main class="glass-card feed">
@@ -48,7 +52,7 @@ onMounted(() => {
     <section class="glass-card reply"><ReplyPanel /></section>
     <footer class="glass-card statusbar">
       房间数 {{ rooms.rooms.length }} ｜ 弹幕 {{ danmaku.items.length }} 条 ｜
-      {{ ai.state?.dbAvailable ? '历史落盘：开' : '历史落盘：不可用' }} ｜ 模式：B站 WS Hook
+      {{ ai.state?.dbAvailable ? '历史落盘：开' : '历史落盘：不可用' }} ｜ 抓取：B站主进程直连
     </footer>
   </div>
 </template>
@@ -63,7 +67,7 @@ onMounted(() => {
 .topbar { grid-area: top; display: flex; align-items: center; gap: 16px; padding: 0 16px; font-weight: 700; }
 .logo { font-size: 16px; }
 .stat { font-size: 13px; }
-.topbar__settings { margin-left: auto; }
+.topbar__settings { margin-left: auto; display: flex; gap: 8px; }
 .sidebar { grid-area: side; }
 .feed { grid-area: feed; overflow: hidden; display: flex; flex-direction: column; }
 .feed-tabs { display: flex; gap: 6px; padding: 8px 10px 0; }
