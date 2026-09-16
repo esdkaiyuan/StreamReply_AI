@@ -25,20 +25,33 @@ const dragging = ref(false)
 
 const candidates = computed(() => rooms.rooms.filter((r) => r.status !== 'closed'))
 const height = computed(() => manualHeight.value ?? autoHeight.value)
+/**
+ * 宽度跟随 16:9：面板始终是 16:9 矩形，视频正好铺满、**零黑边**。
+ * 中栏很宽时靠收窄面板（居中）而不是拉高，避免把弹幕列表挤下去。
+ */
+const slotWidth = computed(() => {
+  const avail = wrap.value?.clientWidth ?? 0
+  const ideal = Math.round((height.value * 16) / 9)
+  return avail ? Math.min(ideal, avail) : ideal
+})
 
 const MIN_H = 120
 
 /**
- * 默认高度取「栏宽 × 9/16」，正好贴合 16:9 不留黑边；
- * 上限为「窗口高度 - 240px」，给弹幕列表与工具栏留出空间。
- * （不要用父元素的 clientHeight：父级是 .vp 自身，高度由本面板决定，会算成死循环）
+ * 默认高度 = min(栏宽 × 9/16, 窗口高 × 0.38, 460px)。
+ *
+ * 不能只按 16:9 算：中栏很宽时（如 1900px）9/16 会得出 1000+px，
+ * 几乎吃掉整个中栏、把弹幕列表挤到屏幕外。宁可留一点左右黑边（object-fit 保证不变形），
+ * 也要给弹幕留够空间；想放大直接拖下边缘。
+ *
+ * 也不要拿父元素的 clientHeight 求上限——父级高度由本面板决定，会算出负数。
  */
 function recomputeAuto(): void {
   const w = wrap.value?.clientWidth ?? 0
   if (!w) return
   const byRatio = Math.round((w * 9) / 16)
-  const cap = Math.round(window.innerHeight) - 240
-  autoHeight.value = Math.max(MIN_H, Math.min(byRatio, cap))
+  const byViewport = Math.round(window.innerHeight * 0.38)
+  autoHeight.value = Math.max(MIN_H, Math.min(byRatio, byViewport, 460))
 }
 
 function measure(): VideoRect | null {
@@ -168,7 +181,12 @@ function resetHeight(): void {
           仅当前房间出声 ｜ 按原比例自适应（拖下边缘调高，双击复位）
         </span>
       </div>
-      <div v-show="!collapsed" ref="slot" class="vp-slot" :style="{ height: height + 'px' }">
+      <div
+        v-show="!collapsed"
+        ref="slot"
+        class="vp-slot"
+        :style="{ height: height + 'px', width: slotWidth + 'px' }"
+      >
         <p v-if="!candidates.length" class="vp-empty">
           添加直播间后这里会显示画面<br />
           <span class="vp-sub">（只保留播放器，页面其他区块已隐藏）</span>
@@ -194,6 +212,8 @@ function resetHeight(): void {
 .vp-slot {
   display: grid;
   place-items: center;
+  margin: 0 auto; /* 收窄时居中 */
+  max-width: 100%;
   background: #000;
   border: 1.5px solid var(--ink);
   border-radius: var(--radius-md);
