@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import type { LoginState, QrPhase } from '../../../shared/types'
+import { useUiStore } from '../stores/ui'
 
+const ui = useUiStore()
 const open = ref(false)
 const tab = ref<'qr' | 'cookie'>('qr')
 const state = ref<LoginState | null>(null)
@@ -109,6 +111,12 @@ async function show(): Promise<void> {
 }
 
 onUnmounted(stopPolling)
+
+// 通知主进程隐藏直播画面（原生层会盖住弹窗）
+watch(open, (v) => (v ? ui.openModal() : ui.closeModal()))
+onUnmounted(() => {
+  if (open.value) ui.closeModal()
+})
 </script>
 
 <template>

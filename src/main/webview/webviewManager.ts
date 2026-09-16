@@ -117,7 +117,9 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   // 放到屏幕外隐藏，仍保持网络与 JS 活动
   const host = mainWindow
   if (host) host.contentView.addChildView(view)
-  view.setBounds({ x: -20000, y: 0, width: 1280, height: 800 })
+  view.setBounds(OFFSCREEN_BOUNDS)
+  // 默认静音：只有被 UI 指定为「当前画面」的房间才出声（见 setVideoTarget）
+  view.webContents.setAudioMuted(true)
 
   /** 房间仍在册时才改状态/推事件（防止已关闭房间的迟到回调污染 UI） */
   const alive = (): boolean => rooms.get(roomId) === session
@@ -223,6 +225,10 @@ function ensureIpcRoutes(): void {
   ipcMain.on(IPC.wvInjectReady, () => {
     /* hook 安装确认，无需处理 */
   })
+  // 画面位置：渲染进程测量占位区后上报（尺寸变化频繁，用 send 而非 invoke）
+  ipcMain.on(IPC.videoSetTarget, (_e, roomId: string | null, rect: VideoRect | null) => {
+    setVideoTarget(roomId ? String(roomId) : null, rect && typeof rect === 'object' ? rect : null)
+  })
   ipcMain.on(IPC.wvDomReady, (e) => {
     const room = roomBySender(e.sender)
     if (room && room.domMode) setStatus(room, 'fallback-dom') // 仅兜底模式下接受，防主通道接管后状态回跳
@@ -291,6 +297,63 @@ export function reloadAllRooms(): void {
     }
   }
 }
+
+/**
+ * 把某个房间的画面搬到可见区域（其余房间移回屏外）。
+ *
+ * 为什么这么做：原生 WebContentsView 一直以 x:-20000 挂在窗口上（所以听得到声音），
+ * 直接改 bounds 就能看到真实画面，无需逆向拉流派 URL（签名 + Referer 校验，极脆弱）。
+ * `rect` 为 null 或过小时表示面板已折叠/被遮挡，全部移回屏外。
+ */
+/** 当前正在展示画面的房间（仅用于日志与切台判断） */
+let videoTargetRoomId: string | null = null
+
+export function setVideoTarget(roomId: string | null, rect: VideoRect | null): void {
+  const usable =
+    roomId !== null &&
+    rect !== null &&
+    rect.width >= MIN_VISIBLE_SIZE &&
+    rect.height >= MIN_VISIBLE_SIZE
+
+  const next = usable ? roomId : null
+  if (next !== videoTargetRoomId) {
+    videoTargetRoomId = next
+    console.log(next ? `[wv] 直播画面切换到房间 ${next}` : '[wv] 直播画面已隐藏')
+  }
+
+  for (const room of rooms.values()) {
+    const show = usable && room.info.roomId === roomId
+    try {
+      if (show) {
+        room.view.setBounds({
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        })
+      } else {
+        room.view.setBounds(OFFSCREEN_BOUNDS)
+      }
+      // 只有正在展示的房间出声：多房间同时播放会声音混叠
+      room.view.webContents.setAudioMuted(!show)
+    } catch (err) {
+      console.warn('[wv] 调整画面位置失败:', room.info.roomId, String(err))
+    }
+  }
+}
+
+/** 可见区域矩形（单位与页面 CSS px 一致，即 Electron 的 DIP） */
+export interface VideoRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** 隐藏位置：屏幕外仍保持渲染与网络活动（这也是能听到声音的原因） */
+const OFFSCREEN_BOUNDS = { x: -20000, y: 0, width: 1280, height: 800 }
+/** 小于这个尺寸说明面板已折叠/不可见，按隐藏处理，避免 setBounds 报错 */
+const MIN_VISIBLE_SIZE = 8
 
 /** 页面脚本的失败码 → 可自助解决的中文说明（不要笼统说「未找到输入框」） */
 const SEND_FAIL_REASON: Record<string, string> = {

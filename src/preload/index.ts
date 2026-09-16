@@ -16,7 +16,8 @@ import type {
   ReplySnapshot,
   RoomInfo,
   RoomStatEvent,
-  SendResult
+  SendResult,
+  VideoRect
 } from '../shared/types'
 import { IPC } from '../shared/types'
 
@@ -31,6 +32,12 @@ const api = {
     ipcRenderer.invoke(IPC.roomAdd, input, platform),
   removeRoom: (roomId: string): Promise<void> => ipcRenderer.invoke(IPC.roomRemove, roomId),
   listRooms: (): Promise<RoomInfo[]> => ipcRenderer.invoke(IPC.roomList),
+  /**
+   * 上报「直播画面」占位区矩形；主进程据此把该房间的原生视图搬进可见区域。
+   * roomId 或 rect 为 null 表示隐藏所有画面。
+   */
+  setVideoTarget: (roomId: string | null, rect: VideoRect | null): void =>
+    ipcRenderer.send(IPC.videoSetTarget, roomId, rect),
   onDanmaku: (cb: (m: DanmakuMessage) => void) => subscribe(IPC.danmaku, cb),
   onRoomStatus: (cb: (r: RoomInfo) => void) => subscribe(IPC.roomStatusChanged, cb),
   onRoomStat: (cb: (s: RoomStatEvent) => void) => subscribe(IPC.roomStat, cb),

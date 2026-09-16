@@ -58,6 +58,7 @@ export const IPC = {
   wvKuaishouFrame: 'wv:ks-frame',
   wvDouyuFrame: 'wv:douyu-frame',
   wvHuyaFrame: 'wv:huya-frame',
+  videoSetTarget: 'video:set-target',
   replyUpdate: 'reply:update',
   replyConfirm: 'reply:confirm',
   replyReject: 'reply:reject',
@@ -87,6 +88,14 @@ export interface AddRoomResult { ok: boolean; error?: string }
 export interface SendResult {
   ok: boolean
   reason?: string
+}
+
+/** 直播画面占位区矩形（CSS px，与 Electron DIP 一致） */
+export interface VideoRect {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 /**

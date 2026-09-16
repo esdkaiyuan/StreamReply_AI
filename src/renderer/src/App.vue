@@ -6,6 +6,7 @@ import ReplyPanel from './components/ReplyPanel.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
 import LoginPanel from './components/LoginPanel.vue'
+import VideoPanel from './components/VideoPanel.vue'
 import { useAiStore } from './stores/ai'
 import { useDanmakuStore } from './stores/danmaku'
 import { useRoomStore } from './stores/rooms'
@@ -40,6 +41,7 @@ onMounted(() => {
     </header>
     <aside class="glass-card sidebar"><RoomPanel /></aside>
     <main class="glass-card feed">
+      <VideoPanel />
       <div class="feed-tabs">
         <button :class="{ on: feedTab === 'live' }" @click="feedTab = 'live'">实时弹幕</button>
         <button :class="{ on: feedTab === 'history' }" @click="feedTab = 'history'">历史记录</button>
@@ -69,8 +71,8 @@ onMounted(() => {
 .stat { font-size: 13px; }
 .topbar__settings { margin-left: auto; display: flex; gap: 8px; }
 .sidebar { grid-area: side; }
-.feed { grid-area: feed; overflow: hidden; display: flex; flex-direction: column; }
-.feed-tabs { display: flex; gap: 6px; padding: 8px 10px 0; }
+.feed { grid-area: feed; overflow: hidden; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.feed-tabs { display: flex; gap: 6px; }
 .feed-tabs button {
   font: inherit; font-size: 12px; padding: 3px 12px; cursor: pointer;
   border: 1.5px solid var(--ink); border-radius: var(--radius-sm);

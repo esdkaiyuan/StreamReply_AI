@@ -1,13 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import type { AppSettings, TriggerMode } from '../../../shared/types'
 import { useSettingsStore } from '../stores/settings'
+import { useUiStore } from '../stores/ui'
 
 const store = useSettingsStore()
+const ui = useUiStore()
 const open = ref(false)
 const form = ref<AppSettings | null>(null)
 const keywordsText = ref('')
 const sensitiveText = ref('')
+
+// 通知主进程隐藏直播画面（原生层会盖住抽屉）
+watch(open, (v) => (v ? ui.openModal() : ui.closeModal()))
+onUnmounted(() => {
+  if (open.value) ui.closeModal()
+})
 
 const TRIGGERS: Array<{ v: TriggerMode; label: string }> = [
   { v: 'smart', label: '智能模式（AI 自行判断）' },
