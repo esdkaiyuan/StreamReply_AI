@@ -357,3 +357,37 @@ describe('CDP 启动重试', () => {
     expect(errors[0]).toContain('已尝试 2 次')
   })
 })
+
+describe('CDP 抓取客户端发出的帧（校准解析器用）', () => {
+  it('配置了 onSentFrame 时会上报发送方向的帧', async () => {
+    const dbg = new FakeDebugger()
+    const sent: string[] = []
+    const capture = createCdpCapture(
+      dbg,
+      {
+        onEndpoint: () => {},
+        onFrame: () => false,
+        onError: () => {},
+        onSentFrame: (raw) => sent.push(Buffer.from(raw).toString('utf8'))
+      },
+      { isDanmakuWs: () => true, enableAttempts: 1, enableRetryDelayMs: 0 }
+    )
+    await capture.start()
+    dbg.emit('Network.webSocketFrameSent', {
+      requestId: 'r1',
+      response: { opcode: 1, payloadData: 'hello-server' }
+    })
+
+    expect(sent).toEqual(['hello-server'])
+  })
+
+  it('未配置 onSentFrame 时不做任何处理（不能因为发了帧就影响接收路径）', async () => {
+    const h = setup()
+    await h.capture.start()
+    h.dbg.emit('Network.webSocketFrameSent', {
+      requestId: 'r1',
+      response: { opcode: 2, payloadData: b64(Buffer.from([1, 2, 3])) }
+    })
+    expect(h.frames).toHaveLength(0)
+  })
+})

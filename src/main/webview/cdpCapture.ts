@@ -32,6 +32,11 @@ export interface CdpCaptureHooks {
    * `url` 为该帧所属连接，便于上层记录/过滤。
    */
   onFrame(raw: Uint8Array, source: CaptureSource, url: string): boolean
+  /**
+   * 客户端**发出**的一帧（默认不关心）。
+   * 用途：对照「已知的请求结构」校准解析器，以及排查发送链路被平台拒收的原因。
+   */
+  onSentFrame?(raw: Uint8Array, url: string): void
   /** 发现疑似「HTTP 推流」的响应（诊断用：用于确认某些平台是否走 fetch 流） */
   onStreamHint?(url: string, chunks: number): void
   onError(message: string): void
@@ -146,6 +151,15 @@ export function createCdpCapture(
         // 只有拿到真实 URL 才锁定通道：若 webSocketCreated 没被捕获到（例如在连接建立后才附加
         // 调试器），这里 url 会是空串，锁成空串会让「只认这个通道」退化成「不过滤」
         if (consumed && !danmakuUrl && url) danmakuUrl = url
+        return
+      }
+
+      case 'Network.webSocketFrameSent': {
+        if (!hooks.onSentFrame) return
+        const response = (p['response'] ?? {}) as Record<string, unknown>
+        const raw = decodeFramePayload(Number(response['opcode']), String(response['payloadData'] ?? ''))
+        if (!raw) return
+        hooks.onSentFrame(raw, wsUrls.get(String(p['requestId'] ?? '')) ?? '')
         return
       }
 
