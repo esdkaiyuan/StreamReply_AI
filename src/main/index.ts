@@ -6,6 +6,10 @@ import { startReplyPipeline, rebindReplyWindow } from './ai/pipeline'
 import type { DbStore } from './db/store'
 import { registerHistoryIpc } from './db/historyIpc'
 import { registerAuthIpc } from './auth/ipc'
+import { setupUserData } from './userData'
+
+// 必须最先执行：钉死 userData 目录，避免「换个启动方式就变成未登录」
+setupUserData()
 
 /**
  * 无可用 GPU 的环境（虚拟机 / 远程桌面 / CI / 沙箱）里，Chromium 的 GPU 进程会反复崩溃并

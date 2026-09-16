@@ -21,6 +21,7 @@ const TRIGGERS: Array<{ v: TriggerMode; label: string }> = [
   { v: 'smart', label: '智能模式（AI 自行判断）' },
   { v: 'keyword', label: '仅关键词' },
   { v: 'question', label: '仅提问' },
+  { v: 'random', label: '随机模式（按随机间隔主动挑弹幕回复）' },
   { v: 'all', label: '全部回复（不推荐）' }
 ]
 
@@ -44,8 +45,18 @@ function splitList(text: string): string[] {
     .filter(Boolean)
 }
 
+function clamp(n: number, lo: number, hi: number): number {
+  const v = Number.isFinite(n) ? Math.round(n) : lo
+  return Math.min(Math.max(v, lo), hi)
+}
+
 async function save(): Promise<void> {
   if (!form.value) return
+  // 间隔一律「先夹紧再保证 max ≥ min」：用户在输入框里写反了也不会失控
+  const gapMin = clamp(form.value.replyGapMinSec, 1, 3600)
+  const gapMax = Math.max(gapMin, clamp(form.value.replyGapMaxSec, 1, 3600))
+  const randMin = clamp(form.value.randomIntervalMinSec, 5, 3600)
+  const randMax = Math.max(randMin, clamp(form.value.randomIntervalMaxSec, 5, 3600))
   const patch: Partial<AppSettings> = {
     glmBaseUrl: form.value.glmBaseUrl.trim(),
     glmModel: form.value.glmModel.trim(),
@@ -55,8 +66,13 @@ async function save(): Promise<void> {
     keywords: splitList(keywordsText.value),
     sensitiveWords: splitList(sensitiveText.value),
     requireConfirm: form.value.requireConfirm,
-    maxPerMinute: Math.min(Math.max(form.value.maxPerMinute, 1), 10),
-    maxPerHour: Math.min(Math.max(form.value.maxPerHour, 1), 200)
+    maxPerMinute: clamp(form.value.maxPerMinute, 1, 10),
+    maxPerHour: clamp(form.value.maxPerHour, 1, 200),
+    replyGapMinSec: gapMin,
+    replyGapMaxSec: gapMax,
+    randomIntervalMinSec: randMin,
+    randomIntervalMaxSec: randMax,
+    randomPoolSize: clamp(form.value.randomPoolSize, 1, 200)
   }
   await store.save(patch)
   open.value = false
@@ -97,6 +113,53 @@ async function save(): Promise<void> {
             每小时上限
             <input v-model.number="form.maxPerHour" class="input-cartoon" type="number" min="1" />
           </label>
+
+          <p class="hint">回复节奏：两条回复之间会在下面区间内随机等待，间隔越大越不容易被风控。</p>
+          <label>
+            相邻回复最小间隔（秒）
+            <input v-model.number="form.replyGapMinSec" class="input-cartoon" type="number" min="1" max="3600" />
+          </label>
+          <label>
+            相邻回复最大间隔（秒）
+            <input v-model.number="form.replyGapMaxSec" class="input-cartoon" type="number" min="1" max="3600" />
+          </label>
+
+          <template v-if="form.triggerMode === 'random'">
+            <p class="hint">
+              随机模式不看内容：每隔一个随机时长，就从最近弹幕里挑一条回复（已回复过的不再重复挑）。
+              开启方式：右侧 AI 开关打开即可。
+            </p>
+            <label>
+              随机触发最小间隔（秒）
+              <input
+                v-model.number="form.randomIntervalMinSec"
+                class="input-cartoon"
+                type="number"
+                min="5"
+                max="3600"
+              />
+            </label>
+            <label>
+              随机触发最大间隔（秒）
+              <input
+                v-model.number="form.randomIntervalMaxSec"
+                class="input-cartoon"
+                type="number"
+                min="5"
+                max="3600"
+              />
+            </label>
+            <label>
+              候选池大小（从最近 N 条里挑）
+              <input
+                v-model.number="form.randomPoolSize"
+                class="input-cartoon"
+                type="number"
+                min="1"
+                max="200"
+              />
+            </label>
+          </template>
         </template>
         <p v-else class="hint">加载中…</p>
         <div class="drawer-actions">

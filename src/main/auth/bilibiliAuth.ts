@@ -104,13 +104,55 @@ async function missingRequiredCookies(): Promise<string[]> {
   return missing
 }
 
+async function hasCookie(name: string): Promise<boolean> {
+  const list = await defaultSession().cookies.get({ name }).catch(() => [])
+  return list.some((c) => c.value)
+}
+
+/**
+ * 补全 CSRF Cookie（`bili_jct`）。
+ *
+ * B 站把 `bili_jct` 当作发送类接口的 csrf 令牌。有些登录路径只会写入
+ * `SESSDATA` / `DedeUserID`，不带它 —— 此时「能收弹幕但发不出去」（服务端 -111）。
+ *
+ * 实测（2026-09-16）：只要带着有效 SESSDATA 访问一次 `https://www.bilibili.com/`，
+ * B 站就会补发 `bili_jct`（连带 `b_lsid`）。所以这里做一次静默补全，无需用户重新登录。
+ */
+export async function ensureCsrfCookie(): Promise<boolean> {
+  if (await hasCookie('bili_jct')) return true
+  let win: BrowserWindow | null = null
+  try {
+    win = new BrowserWindow({ show: false, webPreferences: { backgroundThrottling: false } })
+    await win.loadURL('https://www.bilibili.com/').catch(() => undefined)
+    // 网络服务偶发崩溃重启，Set-Cookie 可能延迟落库 → 轮询几次再判定
+    for (let i = 0; i < 6; i += 1) {
+      await new Promise((r) => setTimeout(r, 600))
+      if (await hasCookie('bili_jct')) return true
+    }
+    console.warn('[auth] 未能补全 bili_jct：发送弹幕可能被 B 站以 -111 拒绝，建议重新登录一次')
+    return false
+  } catch {
+    return false
+  } finally {
+    try {
+      win?.destroy()
+    } catch {
+      /* 忽略 */
+    }
+  }
+}
+
 /** 查询当前登录态（带缓存破坏，避免拿到旧的 nav 结果） */
 export async function getLoginState(): Promise<LoginState> {
   try {
     const res = await httpRequest({ url: `${NAV}?t=${Date.now()}`, session: defaultSession() })
     const data = (res.json as NavPayload)?.data
     if (data?.isLogin) {
-      const missing = await missingRequiredCookies()
+      let missing = await missingRequiredCookies()
+      if (missing.includes('bili_jct')) {
+        // 缺 CSRF 时静默补全一次，再复检，避免把「其实已可发送」误报成缺 Cookie
+        if (await ensureCsrfCookie()) missing = await missingRequiredCookies()
+      }
       return { isLogin: true, uid: data.mid, uname: data.uname, missingCookies: missing }
     }
     return { isLogin: false }

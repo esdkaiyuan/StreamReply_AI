@@ -116,7 +116,12 @@ export const FRAME_CHANNELS: Record<string, { channel: string; maxBytes: number 
 
 export type Emotion = 'answer' | 'thanks' | 'greet' | 'tease' | 'comfort'
 export type ReplyStatus = 'pending-confirm' | 'queued' | 'sending' | 'sent' | 'failed' | 'rejected'
-export type TriggerMode = 'smart' | 'keyword' | 'question' | 'all'
+/**
+ * 触发模式。
+ * - `smart` / `all` / `question` / `keyword`：由弹幕**到达**驱动，逐条判断；
+ * - `random`：**不看内容**，按随机时间间隔从最近弹幕池里挑一条回复（自动随机回复）。
+ */
+export type TriggerMode = 'smart' | 'keyword' | 'question' | 'all' | 'random'
 
 export interface ReplyTask {
   id: string
@@ -197,6 +202,16 @@ export interface AppSettings {
   maxPerMinute: number
   maxPerHour: number
   aiEnabled: boolean
+  /** 相邻两条回复之间的最小间隔（秒）——防风控的节奏控制 */
+  replyGapMinSec: number
+  /** 相邻两条回复之间的最大间隔（秒）；实际间隔在 [min,max] 内随机 */
+  replyGapMaxSec: number
+  /** 「随机」触发模式下的最小间隔（秒） */
+  randomIntervalMinSec: number
+  /** 「随机」触发模式下的最大间隔（秒）；实际间隔在 [min,max] 内随机 */
+  randomIntervalMaxSec: number
+  /** 随机挑选回复对象时，从最近多少条弹幕里挑 */
+  randomPoolSize: number
 }
 
 export interface ReplySnapshot {

@@ -458,6 +458,8 @@ export async function sendText(roomId: string, text: string): Promise<SendResult
     return { ok: false, reason: '直播间页面正在加载，请稍后重试' }
   }
   try {
+    // 平台侧发送前准备（B 站：补全 CSRF Cookie，缺它发送会被服务端 -111 拒掉）
+    if (room.adapter.prepareSend) await room.adapter.prepareSend()
     const result = (await room.view.webContents.executeJavaScript(
       room.adapter.sendScript(text)
     )) as string

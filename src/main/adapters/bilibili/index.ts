@@ -19,6 +19,15 @@ export const bilibiliAdapter: PlatformAdapter = {
   domFallbackScript: () => DOM_OBSERVER_SCRIPT,
 
   /**
+   * 发送前补全 CSRF Cookie。
+   * 同样动态 import：`./../../auth/bilibiliAuth` 依赖 electron，适配器要能在单测里被引用。
+   */
+  prepareSend: async () => {
+    const { ensureCsrfCookie } = await import('../../auth/bilibiliAuth')
+    await ensureCsrfCookie()
+  },
+
+  /**
    * 主进程直连弹幕服务器。
    * 动态 import：`./direct` 依赖 electron（net），而适配器会被单测直接引用，
    * 动态加载可保证测试环境永不触碰 electron。

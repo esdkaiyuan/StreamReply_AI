@@ -31,6 +31,14 @@ export interface PlatformAdapter {
   /** 在页面内模拟输入并发送 */
   sendScript(text: string): string
   /**
+   * 发送前的平台准备工作（可选）。
+   *
+   * B 站用它补全发送必需的 CSRF Cookie（`bili_jct`）——缺它会「能收弹幕但发不出」
+   * （服务端 -111），而页面脚本仍会返回成功，是个很难自证的假成功。
+   * 放在适配器里而不是通用发送路径，是为了不把平台细节渗进 webviewManager。
+   */
+  prepareSend?(): Promise<void>
+  /**
    * 主进程直连抓取（不依赖页面传输层）。返回 null 表示平台不支持。
    * 支持时优先于页面注入路径，用于绕开「连接建在 Worker 内」等场景。
    */

@@ -7,7 +7,8 @@ import type { AppSettings } from '../../shared/types'
 import { GlmClient } from './client'
 import { parseReply } from './schema'
 import { buildPrompt } from './prompt'
-import { shouldReply } from './trigger'
+import { shouldReply, pickRandomDanmaku } from './trigger'
+import { RandomReplyTimer } from './randomTimer'
 import { ReplyFilter } from '../sender/filter'
 import { SendScheduler } from '../sender/scheduler'
 import { effectiveApiKey, hasApiKey } from '../settings'
@@ -15,8 +16,13 @@ import { bus } from '../webview/bus'
 import { sendText } from '../webview/webviewManager'
 import type { DbStore } from '../db/store'
 
+/** 送进 prompt 的上下文条数 */
 const MAX_CONTEXT = 40
+/** 每个房间保留的弹幕缓冲上限（随机模式要从里面挑，故比 prompt 上下文宽） */
+const BUFFER_MAX = 200
 const MAX_INFLIGHT = 3
+/** 已回复消息 id 的去重集合上限，超过就丢一半，避免无界增长 */
+const REPLIED_ID_MAX = 1000
 
 let targetWin: BrowserWindow | null = null
 
@@ -50,14 +56,18 @@ export function startReplyPipeline(
   const filter = new ReplyFilter(settings.get('sensitiveWords'))
   const recentByRoom = new Map<string, DanmakuMessage[]>()
   const repliedByRoom = new Map<string, Array<{ user: string; reply: string }>>()
+  /** 已回复过的弹幕 id：随机模式靠它去重，避免同一条被反复回复 */
+  const repliedMsgIds = new Set<string>()
+  /** 上一条随机回复的对象昵称，用于尽量不连着回同一个人 */
+  let lastRandomNickname: string | undefined
   let inflight = 0
 
   const scheduler = new SendScheduler({
     get minDelayMs() {
-      return 8000
+      return settings.get('replyGapMinSec') * 1000
     },
     get maxDelayMs() {
-      return 25000
+      return settings.get('replyGapMaxSec') * 1000
     },
     get maxPerMinute() {
       return settings.get('maxPerMinute')
@@ -101,6 +111,65 @@ export function startReplyPipeline(
     })
   }
 
+  /**
+   * 「随机」模式的节拍器：不看内容，按随机间隔主动挑一条最近的弹幕回复。
+   * 每次触发都重新取随机值，避免形成可识别的固定周期。
+   */
+  const randomTimer = new RandomReplyTimer({
+    getMinMs: () => settings.get('randomIntervalMinSec') * 1000,
+    getMaxMs: () => settings.get('randomIntervalMaxSec') * 1000,
+    onFire: () => pickRandomAndReply()
+  })
+
+  function pickRandomAndReply(): void {
+    if (!settings.get('aiEnabled')) return
+    if (settings.get('triggerMode') !== 'random') return
+    if (!hasApiKey(settings)) return
+    if (inflight >= MAX_INFLIGHT) return
+
+    const poolSize = Math.max(1, Math.min(BUFFER_MAX, settings.get('randomPoolSize') || 1))
+    const pool: DanmakuMessage[] = []
+    for (const list of recentByRoom.values()) pool.push(...list.slice(-poolSize))
+
+    const picked = pickRandomDanmaku(pool, repliedMsgIds, Math.random, lastRandomNickname)
+    if (!picked) {
+      log('info', '随机回复：暂无可回复的弹幕（缓冲为空或都回复过了），等待下一轮')
+      return
+    }
+    rememberReplied(picked)
+    lastRandomNickname = picked.user.nickname
+    inflight += 1
+    void handleDanmaku(picked, recentByRoom.get(picked.roomId) ?? []).finally(() => {
+      inflight -= 1
+    })
+  }
+
+  function rememberReplied(msg: DanmakuMessage): void {
+    repliedMsgIds.add(msg.id)
+    if (repliedMsgIds.size > REPLIED_ID_MAX) {
+      const drop = Math.floor(REPLIED_ID_MAX / 2)
+      let i = 0
+      for (const id of repliedMsgIds) {
+        repliedMsgIds.delete(id)
+        if (++i >= drop) break
+      }
+    }
+  }
+
+  /** 随机模式的启停/重排：开关、Key、触发模式、间隔任何一项变化都要同步 */
+  function syncRandomTimer(): void {
+    const shouldRun =
+      settings.get('aiEnabled') &&
+      hasApiKey(settings) &&
+      settings.get('triggerMode') === 'random'
+    if (!shouldRun) {
+      randomTimer.stop()
+      return
+    }
+    if (randomTimer.isRunning) randomTimer.reschedule()
+    else randomTimer.start()
+  }
+
   ipcMain.handle(IPC.replyEdit, (_e, id: string, text: string) => {
     scheduler.edit(String(id), String(text ?? '').slice(0, 40))
     pushSnapshot()
@@ -112,7 +181,9 @@ export function startReplyPipeline(
       log('error', '未配置 GLM API Key，无法生成回复')
       return false
     }
-    await handleDanmaku(msg, recentByRoom.get(msg.roomId) ?? [])
+    rememberReplied(msg)
+    const recent = (recentByRoom.get(msg.roomId) ?? []).slice(-MAX_CONTEXT)
+    await handleDanmaku(msg, recent)
     return true
   })
 
@@ -156,32 +227,44 @@ export function startReplyPipeline(
   ipcMain.handle(IPC.aiToggle, () => {
     settings.set('aiEnabled', !settings.get('aiEnabled'))
     const enabled = settings.get('aiEnabled')
-    log('info', enabled ? 'AI 回复已开启' : 'AI 回复已关闭')
+    log(
+      'info',
+      enabled
+        ? settings.get('triggerMode') === 'random'
+          ? 'AI 回复已开启（随机模式：按随机间隔主动挑弹幕回复）'
+          : 'AI 回复已开启'
+        : 'AI 回复已关闭'
+    )
+    syncRandomTimer()
     pushState()
     return enabled
   })
   ipcMain.handle(IPC.settingsGet, () => settings.store)
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<AppSettings>) => {
     settings.set(patch as never)
+    // 间隔/触发模式改了要立刻按新节奏重排，否则用户以为没生效
+    syncRandomTimer()
     pushState()
     return settings.store
   })
 
   pushState()
+  syncRandomTimer()
 
   bus.on('danmaku', (msg: DanmakuMessage) => {
     db?.enqueueDanmaku(msg)
     const recent = recentByRoom.get(msg.roomId) ?? []
     recent.push(msg)
-    if (recent.length > MAX_CONTEXT) recent.splice(0, recent.length - MAX_CONTEXT)
+    if (recent.length > BUFFER_MAX) recent.splice(0, recent.length - BUFFER_MAX)
     recentByRoom.set(msg.roomId, recent)
 
     if (!settings.get('aiEnabled') || !hasApiKey(settings)) return
     if (!shouldReply(msg, settings.get('triggerMode'), settings.get('keywords'))) return
     if (inflight >= MAX_INFLIGHT) return
 
+    rememberReplied(msg)
     inflight += 1
-    void handleDanmaku(msg, recent).finally(() => {
+    void handleDanmaku(msg, recent.slice(-MAX_CONTEXT)).finally(() => {
       inflight -= 1
     })
   })

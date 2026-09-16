@@ -38,19 +38,26 @@ const Z_TOP = '2147483647'
 export const PLAYER_FRAME_RE = /blanc|player|liteVersion/i
 
 /**
- * 「发送弹幕用的输入框」选择器 —— 与 inject/sender.ts 的 EXPLICIT 保持同一语义（chat-input）。
+ * 「发送弹幕要用到的元素」选择器 —— 输入框 + 发送按钮。
  *
- * 纯视频模式会为它让路：一旦被 `display:none`，发送脚本就找不到输入框了。
+ * 纯视频模式会为它们让路：一旦被 `display:none`，
+ * 发送脚本的可见性判断（尺寸需 > 8px）就会失败，功能直接失效。
  * ⚠️ 不能用宽泛的 `input`：B 站顶栏搜索框也是 input，会被误留成画面上的残留遮挡。
  * （保留的元素会被固定在视口最上层的播放器盖住，用户依然只看得到画面。）
  */
 const INPUT_KEEP_SELECTOR = [
+  // 输入框（与 inject/sender.ts 的 EXPLICIT 同一语义）
   'textarea',
   '[contenteditable="true"]',
   '[class*="chat-input"]',
   '[class*="danmaku-input"]',
+  '[placeholder*="弹幕"]',
+  // 发送按钮：Enter 键兜底之外还有一条点击路径，别把它藏掉
+  '[class*="chat-control"]',
+  '[class*="bottom-actions"]',
   '[class*="send-bar"]',
-  '[placeholder*="弹幕"]'
+  'button[class*="send"]',
+  '.bl-button--primary'
 ].join(', ')
 
 const CSS = `
@@ -157,14 +164,22 @@ export const VIDEO_MODE_SCRIPT = String.raw`
   /**
    * 元素是否必须保留：播放器本身 / 在祖先链上 / 是播放器的祖先。
    * spareInputs 仅用于顶层文档 —— 那里住着「发送弹幕」用的输入框，
-   * 一旦被 display:none，发送脚本就找不到它了。
+   * 一旦被 display:none，发送脚本的查找就会失败（getBoundingClientRect 变成 0 尺寸）。
    * （保留的元素会被固定在视口的播放器盖住，用户依然只看得到画面。）
+   *
+   * 注意：必须同时判断 el.matches(INPUT_KEEP)。输入框元素自身不可能是自己的后代，
+   * 只查 querySelector 会把输入框本身隐藏掉、而它的祖先却被保留 ——
+   * 这正是 2026-09-16「发送功能失效」的根因。
    */
   function keep(el, target, chain, spareInputs) {
     if (el === target) return true
     if (chain.indexOf(el) >= 0) return true
     if (el.contains && el.contains(target)) return true
-    if (spareInputs && el.querySelector && el.querySelector(INPUT_KEEP)) return true
+    if (spareInputs) {
+      var selfHit = el.matches && el.matches(INPUT_KEEP)
+      var innerHit = el.querySelector && el.querySelector(INPUT_KEEP)
+      if (selfHit || innerHit) return true
+    }
     return false
   }
 

@@ -17,7 +17,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   requireConfirm: true,
   maxPerMinute: 2,
   maxPerHour: 30,
-  aiEnabled: false
+  aiEnabled: false,
+  // 相邻两条回复的间隔：8~25 秒随机（与 M4 调度器的原始取值一致）
+  replyGapMinSec: 8,
+  replyGapMaxSec: 25,
+  // 「随机」模式的触发节奏：1~3 分钟随机一次
+  randomIntervalMinSec: 60,
+  randomIntervalMaxSec: 180,
+  randomPoolSize: 20
 }
 
 let cachedEnvKey: string | null = null

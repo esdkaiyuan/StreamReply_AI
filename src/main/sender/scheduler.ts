@@ -1,4 +1,5 @@
 import type { ReplyTask } from '../../shared/types'
+import { resolveGapMs } from './gap'
 
 export type SendTask = ReplyTask
 
@@ -127,8 +128,9 @@ export class SendScheduler {
     if (minute >= this.opts.maxPerMinute || hour >= this.opts.maxPerHour) return
 
     const task = this.queue.shift()!
-    const range = Math.max(this.opts.maxDelayMs - this.opts.minDelayMs, 0)
-    this.nextSendAt = now + this.opts.minDelayMs + Math.floor(Math.random() * range)
+    // 下一次发送至少间隔 [minDelayMs, maxDelayMs]（闭区间随机取值；
+    // 用统一 helper 保证「上界取得到」且配置写反时不会失控）
+    this.nextSendAt = now + resolveGapMs(this.opts.minDelayMs, this.opts.maxDelayMs)
 
     task.status = 'sending'
     this.emit()
