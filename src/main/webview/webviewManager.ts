@@ -150,6 +150,15 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
     await view.webContents.executeJavaScript(adapter.injectScript()).catch(() => 'inject-failed')
   })
 
+  /**
+   * 播放器 iframe 加载完成后补一次注入。
+   * 首次注入常常落在 `about:blank` 上并随导航失效，这里是最直接的补救。
+   */
+  view.webContents.on('did-frame-finish-load', () => {
+    if (!session.videoMode) return
+    void injectVideoMode(session)
+  })
+
   view.webContents.on('render-process-gone', (_e, details) => {
     console.error('[wv] renderer gone', details.reason)
     // 直连模式下抓取不依赖页面，页面挂了只影响发送，不该把房间判死
@@ -325,26 +334,39 @@ function playerFrames(room: RoomSession): Electron.WebFrameMain[] {
 }
 
 /**
+ * 注入一次纯视频脚本，返回顶层脚本自报的状态（'applied' / 'waiting' / ...）。
+ */
+async function injectVideoMode(room: RoomSession): Promise<string> {
+  const wc = room.view.webContents
+  const top = await wc.executeJavaScript(VIDEO_MODE_SCRIPT).catch(() => 'err')
+  // 同源 iframe 顶层脚本自己能进去；这里主要覆盖跨域播放器
+  const frames = playerFrames(room)
+  await Promise.all(frames.map((f) => f.executeJavaScript(VIDEO_MODE_SCRIPT).catch(() => 'err')))
+  return String(top)
+}
+
+/**
  * 应用「纯视频模式」。
- * 顶层文档先裁一次（隐藏页面其他区块），再**进到播放器 iframe 内裁第二次**——
- * B 站把 <video> 放在 blanc iframe 里，只在顶层注入是找不到视频的。
+ *
+ * 顶层脚本会自己钻进同源播放器 iframe（见 inject/videoMode.ts 顶部注释），
+ * 但有两件事必须由主进程兜住：
+ * 1. **帧刚创建时注入可能落在 `about:blank` 上**，脚本会随该文档的导航一起被销毁
+ *    （连它内部的定时器也一起消失）→ 必须轮询补注，直到脚本自报已生效；
+ * 2. 跨域播放器读不到 `contentDocument` → 只能按 frame 注入。
+ *
+ * ⚠️ 判据不能用「找到几个 frame」：帧存在 ≠ 注入生效。
  */
 async function applyVideoMode(room: RoomSession): Promise<void> {
-  const wc = room.view.webContents
-  await wc.executeJavaScript(VIDEO_MODE_SCRIPT).catch(() => undefined)
-  // iframe 可能还没建好，重试几次；房间已切走就放弃
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
     if (!room.videoMode) return
-    const frames = playerFrames(room)
-    if (frames.length) {
-      await Promise.all(
-        frames.map((f) => f.executeJavaScript(VIDEO_MODE_SCRIPT).catch(() => undefined))
-      )
-      console.log(`[wv] 纯视频模式已应用（含 ${frames.length} 个播放器 iframe）`)
+    const status = await injectVideoMode(room)
+    if (status === 'applied') {
+      console.log(`[wv] 纯视频模式已应用（播放器 iframe ${playerFrames(room).length} 个）`)
       return
     }
-    await new Promise((r) => setTimeout(r, 1200))
+    await new Promise((r) => setTimeout(r, 1500))
   }
+  console.warn('[wv] 纯视频模式未确认生效：播放器可能仍在加载，或该平台播放器为跨域')
 }
 
 async function clearVideoMode(room: RoomSession): Promise<void> {
