@@ -1,24 +1,25 @@
 /**
  * 「纯视频模式」注入脚本。
  *
- * 目标：把直播间页面裁成**只剩播放器**，画面按原比例铺满，且不被页面装饰层遮挡。
+ * 目标：把直播间页面裁成**只剩播放器**，画面按原比例铺满，且不被任何页面元素遮挡。
  *
  * 实测（2026-09-16）B 站结构：
  * ```
- * article#app.tpl-wrap
- *   └ div.rendererRoot → div.layerWrapperRoot → div._pageRoot
- *       └ div.layerWrapperRoot → div.live-non-revenue-player
- *           └ div.live-player-bg          ← 虚化背景层（磨砂的元凶）
- *               └ div.player → div#player-ctnr
- *                   └ iframe(live.bilibili.com/blanc/<room>)  ← 真正的 <video> 在这里
+ * article#app.tpl-wrap → rendererRoot → layerWrapperRoot → _pageRoot
+ *   → layerWrapperRoot → live-non-revenue-player
+ *       → .live-player-bg                 ← 虚化背景层（磨砂元凶）
+ *           → .player → #player-ctnr
+ *               → iframe(live.bilibili.com/blanc/<room>)   ← 真正的 <video> 在这里
  * ```
  *
- * 三个关键点：
- * 1. **播放器在 iframe 内**，顶层文档查不到 `<video>`；
- * 2. **祖先链里混着装饰层**（虚化背景），把整条链强行铺满会把磨砂层也放大 → 盖住画面；
- *    因此对链上元素**清掉 filter / backdrop-filter / background-image**，
- *    并让播放器 iframe **`position: fixed` 钉在视口最上层**，直接压掉所有装饰层；
- * 3. 文档里其他带 blur / backdrop / mask / veil 语义的元素一律隐藏。
+ * 四个关键点：
+ * 1. **播放器在 iframe 内**，顶层文档查不到 `<video>`，两层的文档都要处理；
+ * 2. **祖先链里混着装饰层**（虚化背景），整条链强行铺满会把磨砂层也放大 → 盖住画面；
+ *    所以链上每级要**清掉 filter / backdrop-filter / background-image**；
+ * 3. 只隐藏「链的兄弟」不够 —— blanc 页会另起浮层放主播信息条、关注按钮、重播角标、
+ *    底部礼物勋章条，必须**隐藏一切不属于祖先链的元素**；
+ * 4. 这些浮层是**播放开始后才动态创建**的，所以必须用 MutationObserver 持续清理，
+ *    否则首帧之后出现的控制条/礼物条会一直压在画面上。
  *
  * 不用移动 DOM 节点：搬 iframe 会导致它重新加载（播放中断），纯样式方案可逆且无副作用。
  */
@@ -46,7 +47,7 @@ iframe {
 }
 video {
   /* 钉成视口大小：面板本身是 16:9，16:9 的流放进去正好铺满、零黑边。
-     B 站内部会按像素把播放区压小（实测 84px 给控制条），钉住可避免画面被压小。 */
+     B 站内部会按像素把播放区压小（给控制条留位），钉住可避免画面被压小。 */
   position: fixed !important; inset: 0 !important;
   width: 100vw !important; height: 100vh !important;
   z-index: ${Z_TOP} !important;
@@ -59,15 +60,22 @@ video {
 
 export const VIDEO_MODE_SCRIPT = String.raw`
 (function () {
-  if (window.__LDA_VM__ && window.__LDA_VM__.applied) return 'already'
-
   var STYLE_ID = ${JSON.stringify(STYLE_ID)}
   var HIDDEN_FLAG = ${JSON.stringify(HIDDEN_FLAG)}
   var PLAYER_RE = ${PLAYER_FRAME_RE.toString()}
   var TARGET_RE = /player/i
 
-  /** 顶层没有 <video>（播放器在 iframe 内）时，退而找承载播放器的 iframe */
+  if (window.__LDA_VM__ && window.__LDA_VM__.pass) {
+    window.__LDA_VM__.pass()
+    return 'already'
+  }
+  var state = { applied: false, kind: null, observer: null }
+  window.__LDA_VM__ = state
+
   function findTarget() {
+    // 优先复用已经钉住的那个 video，避免质量切换后认错元素
+    var pinned = document.querySelector('body > video[style*="position: fixed"]')
+    if (pinned) return { el: pinned, kind: 'video' }
     var v = document.querySelector('video')
     if (v) return { el: v, kind: 'video' }
     var frames = document.querySelectorAll('iframe')
@@ -79,11 +87,26 @@ export const VIDEO_MODE_SCRIPT = String.raw`
   }
 
   function hide(el) {
+    if (el.id === STYLE_ID) return
+    if (el.getAttribute(HIDDEN_FLAG) === '1') return
     el.style.setProperty('display', 'none', 'important')
     el.setAttribute(HIDDEN_FLAG, '1')
   }
 
-  function apply() {
+  /** 元素是否必须保留：就是播放器本身 / 在祖先链上 / 是播放器的祖先 */
+  function keep(el, target, chain) {
+    if (el === target) return true
+    if (chain.indexOf(el) >= 0) return true
+    if (el.contains && el.contains(target)) return true
+    return false
+  }
+
+  /** 含 video/iframe 的子树一律不动：可能是播放器重建（切画质），动它会黑屏 */
+  function hasMedia(el) {
+    return !!(el.querySelector && el.querySelector('video, iframe'))
+  }
+
+  function pass() {
     var found = findTarget()
     if (!found) return false
     var target = found.el
@@ -100,7 +123,6 @@ export const VIDEO_MODE_SCRIPT = String.raw`
     }
     if (!box) return false
 
-    // 祖先链（不含 body）
     var chain = []
     var n = box
     while (n && n !== document.body) {
@@ -108,16 +130,7 @@ export const VIDEO_MODE_SCRIPT = String.raw`
       n = n.parentElement
     }
 
-    // 1) 隐藏 body 下不在链上的区块（顶栏/侧栏/聊天/礼物栏…）
-    var tops = document.body.children
-    for (var j = 0; j < tops.length; j++) {
-      var t = tops[j]
-      var tag = String(t.tagName || '').toUpperCase()
-      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'LINK' || tag === 'NOSCRIPT') continue
-      if (chain.indexOf(t) < 0) hide(t)
-    }
-
-    // 2) 链上每级：清掉「磨砂」与定位干扰（关键！否则虚化背景层会盖住画面）
+    // 1) 链上每级：清掉「磨砂」与定位干扰
     for (var k = 0; k < chain.length; k++) {
       var e = chain[k]
       e.style.setProperty('filter', 'none', 'important')
@@ -134,35 +147,15 @@ export const VIDEO_MODE_SCRIPT = String.raw`
       }
     }
 
-    // 3) 沿链逐级隐藏兄弟节点：只留通往播放器的那一条
-    //    实测播放器控制条是 #fullscreen-container 内的兄弟块，占走 84px 高，
-    //    隐掉后 .player-section 才能长到满高、画面不再被压小。
-    for (var si = 0; si + 1 < chain.length; si++) {
-      var parent = chain[si + 1]
-      var keep = chain[si]
-      var kids = parent.children
-      for (var ki = 0; ki < kids.length; ki++) {
-        var kid = kids[ki]
-        if (kid === keep) continue
-        var ktag = String(kid.tagName || '').toUpperCase()
-        if (ktag === 'SCRIPT' || ktag === 'STYLE' || ktag === 'LINK' || ktag === 'NOSCRIPT') continue
-        hide(kid)
-      }
+    // 2) 只留播放器：隐藏一切不属于祖先链的元素
+    var all = document.querySelectorAll('body *')
+    for (var ai = 0; ai < all.length; ai++) {
+      var a = all[ai]
+      if (keep(a, target, chain)) continue
+      hide(a)
     }
 
-    // 4) 隐藏页面里其他带模糊/遮罩语义的装饰层（磨砂遮罩、蒙层等）
-    var suspects = document.querySelectorAll(
-      '[class*="blur" i],[class*="backdrop" i],[class*="veil" i],[class*="frost" i],[class*="scrim" i],[class*="mask" i]'
-    )
-    for (var m = 0; m < suspects.length; m++) {
-      var s = suspects[m]
-      if (s === target || chain.indexOf(s) >= 0) continue
-      if (s.contains(target)) continue
-      hide(s)
-    }
-
-    // 5) video 情况（其他平台）：祖先链铺满，用 object-fit 保比例
-    //    iframe 情况已在 CSS 里钉成 fixed 全屏
+    // 3) video 情况（其他平台）：祖先链铺满，用 object-fit 保比例；iframe 情况已在 CSS 里钉成全屏
     if (found.kind === 'video') {
       for (var q = 0; q < chain.length; q++) {
         var c = chain[q]
@@ -185,16 +178,44 @@ export const VIDEO_MODE_SCRIPT = String.raw`
     }
     style.textContent = ${JSON.stringify(CSS)}
 
-    window.__LDA_VM__ = { applied: true, kind: found.kind }
+    state.applied = true
+    state.kind = found.kind
+    installObserver(target, chain)
     return true
   }
 
-  window.__LDA_VM__ = { applied: false, kind: null }
+  /**
+   * 播放器在首帧之后才会创建控制条、礼物/勋章条等浮层，
+   * 只扫一次必然漏 —— 持续监听新增节点并清掉，同时在若干时间点整树复扫。
+   */
+  function installObserver(target, chain) {
+    if (!state.observer && window.MutationObserver) {
+      state.observer = new MutationObserver(function (muts) {
+        var t = findTarget()
+        if (!t) return
+        for (var i = 0; i < muts.length; i++) {
+          var added = muts[i].addedNodes
+          for (var j = 0; j < added.length; j++) {
+            var node = added[j]
+            if (node.nodeType !== 1) continue
+            if (hasMedia(node)) continue // 播放器重建，交给复扫处理
+            if (keep(node, t.el, chain)) continue
+            hide(node)
+          }
+        }
+      })
+      try {
+        state.observer.observe(document.body, { childList: true, subtree: true })
+      } catch (e) { /* 观察失败不影响主流程 */ }
+    }
+    var delays = [800, 2500, 5000, 9000, 15000, 25000]
+    for (var d = 0; d < delays.length; d++) setTimeout(function () { pass() }, delays[d])
+  }
 
-  // 播放器可能晚于脚本就绪，按退避重试
+  state.pass = pass
   var tries = 0
   function tick() {
-    if (apply()) return
+    if (pass()) return
     tries += 1
     if (tries < 25) setTimeout(tick, 800)
   }
@@ -207,6 +228,11 @@ export const CLEAR_VIDEO_MODE_SCRIPT = String.raw`
 (function () {
   var STYLE_ID = ${JSON.stringify(STYLE_ID)}
   var HIDDEN_FLAG = ${JSON.stringify(HIDDEN_FLAG)}
+  if (window.__LDA_VM__ && window.__LDA_VM__.observer) {
+    try { window.__LDA_VM__.observer.disconnect() } catch (e) {}
+    window.__LDA_VM__.observer = null
+  }
+  if (window.__LDA_VM__) window.__LDA_VM__.pass = null
   var style = document.getElementById(STYLE_ID)
   if (style && style.parentNode) style.parentNode.removeChild(style)
   var hidden = document.querySelectorAll('[' + HIDDEN_FLAG + ']')
