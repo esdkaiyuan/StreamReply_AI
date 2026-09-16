@@ -20,6 +20,11 @@ export interface PlatformAdapter {
   roomUrl(roomId: string): string
   /** 从用户输入解析本平台的房间号 */
   parseRoomId(input: string): string | null
+  /**
+   * 输入前置归一化（可选，**允许发网络请求**）。
+   * 典型场景：抖音/快手的「分享短链」里不含房间号，必须先跳转才能拿到真实地址。
+   */
+  normalizeInput?(input: string): Promise<string>
   /** 注入页面主世界的抓取脚本 */
   injectScript(): string
   /** WS 长时间无数据时的 DOM 兜底脚本；平台未支持返回 null */
@@ -38,6 +43,20 @@ export interface PlatformAdapter {
    * 放在适配器里而不是通用发送路径，是为了不把平台细节渗进 webviewManager。
    */
   prepareSend?(): Promise<void>
+  /**
+   * 抓取改用 CDP 网络事件（`webContents.debugger` + Network 域）。
+   *
+   * 适合「连接建在 Worker / 内部实现里」的平台（实测 B 站就是这样，抖音同理）——
+   * CDP 事件是浏览器进程级的，Worker 内的连接一样能看到。
+   * 开启后**不再注入页面 hook**，避免同一批弹幕被两个来源各发一遍。
+   */
+  captureViaCdp?: boolean
+  /**
+   * HTTP 推流端点判定（可选）。
+   * 目前仅用于**诊断上报**：命中并持续分片时会在日志里提示，
+   * 便于确认真实环境到底走 WebSocket 还是 fetch 流（流式重组待实测后再落地）。
+   */
+  isDanmakuStream?(url: string, mimeType: string): boolean
   /**
    * 主进程直连抓取（不依赖页面传输层）。返回 null 表示平台不支持。
    * 支持时优先于页面注入路径，用于绕开「连接建在 Worker 内」等场景。

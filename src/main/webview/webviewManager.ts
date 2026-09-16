@@ -4,6 +4,7 @@ import type { CaptureSource, Platform, RoomInfo, RoomStatus, SendResult } from '
 import { FRAME_CHANNELS, IPC } from '../../shared/types'
 import { getAdapter, type DirectClient, type DirectHooks, type PlatformAdapter } from '../adapters'
 import { bus } from './bus'
+import { createCdpCapture, type CdpCapture } from './cdpCapture'
 import { CLEAR_VIDEO_MODE_SCRIPT, PLAYER_FRAME_RE, VIDEO_MODE_SCRIPT } from './inject/videoMode'
 
 interface RoomSession {
@@ -16,6 +17,12 @@ interface RoomSession {
   watchdog: NodeJS.Timeout
   /** 主进程直连抓取客户端；非空时它是弹幕帧的唯一来源，页面侧信号一律忽略 */
   direct: DirectClient | null
+  /** CDP 抓帧通道（能看到 Worker 内的连接）；非空时不再注入页面 hook，避免双源重复 */
+  cdp: CdpCapture | null
+  /** CDP 正在启动中：期间也不能注入 hook，否则等它起来会形成双源 */
+  cdpPending: boolean
+  /** 已确认真的在推送弹幕的那条连接（仅用于日志） */
+  cdpEndpointUrl: string | null
   /** 页面是否已切到「纯视频模式」（避免每次尺寸变化重复注入） */
   videoMode: boolean
 }
@@ -61,18 +68,22 @@ function emitStat(room: RoomSession, onlineCount: number): void {
   )
 }
 
-function handleFrame(room: RoomSession, data: Uint8Array, source: CaptureSource): void {
+function handleFrame(room: RoomSession, data: Uint8Array, source: CaptureSource): number {
   let result: ReturnType<PlatformAdapter['parseFrame']>
   try {
     result = room.adapter.parseFrame(Buffer.from(data), room.info.roomId, source)
   } catch (err) {
     console.error('[wv] frame parse error', err)
-    return
+    return 0
   }
-  if (result.danmaku.length === 0 && result.onlineCount === undefined) return
+  if (result.danmaku.length === 0 && result.onlineCount === undefined) return 0
   markCaptured(room)
   for (const msg of result.danmaku) bus.publish(msg)
-  if (result.onlineCount !== undefined) emitStat(room, result.onlineCount)
+  if (result.onlineCount !== undefined) {
+    emitStat(room, result.onlineCount)
+    return result.danmaku.length + 1
+  }
+  return result.danmaku.length
 }
 
 function startDomFallback(room: RoomSession): void {
@@ -114,6 +125,9 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
     retryCount: 0,
     watchdog: null as unknown as NodeJS.Timeout,
     direct: null,
+    cdp: null,
+    cdpPending: false,
+    cdpEndpointUrl: null,
     videoMode: false
   }
   rooms.set(roomId, session)
@@ -145,8 +159,8 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   view.webContents.on('dom-ready', async () => {
     // 页面重载后 window 是新的一份，纯视频模式需要重新应用（含播放器 iframe）
     if (session.videoMode) void applyVideoMode(session)
-    // 直连模式下页面只承担「发送」职责，不注入 WS hook，避免与直连形成双源
-    if (session.direct) return
+    // 直连 / CDP 模式下页面只承担「发送」职责，不注入 WS hook，避免同一批弹幕被两个来源各发一遍
+    if (session.direct || session.cdp || session.cdpPending) return
     await view.webContents.executeJavaScript(adapter.injectScript()).catch(() => 'inject-failed')
   })
 
@@ -216,9 +230,84 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
     }
   }
 
-  // ② 兜底：页面注入 + DOM 观察（抖音/快手/斗鱼/虎牙当前走这条）
+  // ② 次选：CDP 抓帧——浏览器进程级事件，Worker 内的连接同样可见（抖音等平台走这条）
+  if (adapter.captureViaCdp) {
+    // ⚠️ 顺序至关重要（实测）：**必须先发起 loadURL，再附加调试器**。
+    // 在页面开始加载之前 attach，`Network.enable` 会一直不返回（实测 8s 超时后失败），
+    // 而这里如果 await 它，「添加房间」就会整个卡住。
+    const nav = view.webContents.loadURL(adapter.roomUrl(roomId))
+    session.cdpPending = true
+    // 与页面注入路径同等的兜底：8 秒内没抓不到任何帧就重载一次，再不行如实报错
+    armWatchdog()
+    void startCdpCapture(session).then((ok) => {
+      session.cdpPending = false
+      if (!alive()) return
+      if (ok) return
+      console.warn('[wv] CDP 抓帧不可用，退回页面注入')
+      void view.webContents.executeJavaScript(adapter.injectScript()).catch(() => undefined)
+    })
+    try {
+      await nav
+    } catch (err) {
+      // CDP 负责抓取，页面加载失败只影响「发送」，如实记录而不判死整条链路
+      console.warn('[wv] CDP 模式下页面加载失败（仅影响发送，抓取不受影响）:', String(err))
+    }
+    return
+  }
+
+  // ③ 兜底：页面注入 + DOM 观察（快手/斗鱼/虎牙当前走这条）
   armWatchdog()
   await view.webContents.loadURL(adapter.roomUrl(roomId))
+}
+
+/**
+ * 用 CDP 抓帧：`webContents.debugger` + Network 域。
+ *
+ * 之所以单列一条通道：实测 B 站把弹幕连接建在 **blob Worker** 内，
+ * 主世界 `window.WebSocket` patch 看不到；抖音这类平台也可能如此。
+ * CDP 事件是浏览器进程级的，Worker 内的连接一样能看到，还能拿到端点 URL 做过滤。
+ *
+ * ⚠️ `onFrame` 必须**返回是否真的被消费**：端点识别可能不准，
+ * 所以未确认通道前所有 WS 帧都上送试探，由 `parseFrame` 严格校验；
+ * 一旦某条连接产出过数据，就只认它，省掉无谓解析。
+ */
+async function startCdpCapture(room: RoomSession): Promise<boolean> {
+  const capture = createCdpCapture(
+    room.view.webContents.debugger,
+    {
+      onEndpoint: (url) => {
+        console.log('[wv] CDP 识别到弹幕端点:', url)
+        armFrameWatchdog(room)
+      },
+      onFrame: (raw, source, url) => {
+        const produced = handleFrame(room, raw, source)
+        if (produced > 0 && !room.cdpEndpointUrl) {
+          room.cdpEndpointUrl = url
+          console.log('[wv] CDP 锁定弹幕帧来源:', url)
+        }
+        return produced > 0
+      },
+      onStreamHint: (url, chunks) => {
+        console.warn(
+          `[wv] 检测到疑似 HTTP 推流（已 ${chunks} 个分片）：${url}\n` +
+            '[wv] 当前未做流式重组，若此平台弹幕抓不到，请把这条日志反馈以便按真实帧补实现'
+        )
+      },
+      onError: (message) => console.warn('[wv] CDP 抓取异常:', message),
+      onLog: (level, message) => console.log(`[wv][cdp:${level}] ${message}`)
+    },
+    {
+      isDanmakuWs: (url) => room.adapter.isDanmakuWs(url),
+      isDanmakuStream: room.adapter.isDanmakuStream
+    }
+  )
+  const ok = await capture.start()
+  if (!ok) {
+    capture.stop()
+    return false
+  }
+  room.cdp = capture
+  return true
 }
 
 /** IPC 路由模块级幂等注册一次，按 sender 路由到对应房间（避免每房间重复注册导致泄漏） */
@@ -289,6 +378,7 @@ export function closeRoom(roomId: string): void {
   clearTimeout(room.watchdog)
   rooms.delete(roomId) // 先摘除，后续任何迟到回调都会被 alive() 拦住
   room.direct?.stop()
+  room.cdp?.stop() // 必须 detach：否则调试器悬挂在已关闭的 webContents 上
   if (mainWindow) mainWindow.contentView.removeChildView(room.view)
   void room.view.webContents.close()
   setStatus(room, 'closed')
@@ -443,9 +533,11 @@ const MIN_VISIBLE_SIZE = 8
 /** 页面脚本的失败码 → 可自助解决的中文说明（不要笼统说「未找到输入框」） */
 const SEND_FAIL_REASON: Record<string, string> = {
   'page-not-ready': '直播间页面尚未加载完成，请稍后重试',
-  'need-login': '当前页面是游客态，B 站不渲染弹幕输入框 —— 请先在顶部「👤 账号」登录',
+  'need-login':
+    '当前页面是游客态，平台不渲染弹幕输入框 —— 请先在顶部「👤 账号」登录',
   'no-input': '未找到弹幕输入框（可能是非直播间页面，或该房间不支持发言）',
   'no-setter': '找到输入框但类型不受支持，无法写入文本',
+  'set-failed': '文本没有真正写进输入框（富文本编辑器拦截或页面改版），已放弃发送',
   'send-failed': '已填入文本但未找到发送按钮'
 }
 

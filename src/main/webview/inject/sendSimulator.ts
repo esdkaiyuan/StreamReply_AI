@@ -7,13 +7,19 @@ function embed(text: string): string {
 }
 
 /**
- * 通用「页面内模拟输入并发送」脚本构造器。
+ * 通用「页面内模拟输入并发送」脚本构造器（抖音 / 快手 / 斗鱼 / 虎牙共用）。
  *
- * 抖音与快手的输入框都可能是 `contenteditable` div，也可能是 textarea，
- * 因此按候选选择器依次尝试，最后用回车提交，回车不可用再退回点击发送按钮。
+ * 各平台输入框可能是 `contenteditable` div，也可能是 textarea，故按候选选择器依次尝试。
  *
- * ⚠️ 选择器需真实直播间联调确认；全部未命中时返回 'no-input'，
- * 交由调度器计入熔断，绝不静默假装发送成功。
+ * 三个关键点（都是踩过的坑）：
+ * 1. **contenteditable 必须优先用 `execCommand('insertText')`**：直接改 `textContent`
+ *    不会触发 React / Draft 这类富文本编辑器的内部状态 —— 看起来填进去了，实际发出去是空的；
+ * 2. **写完后回读校验**：编辑器把文本吃了却返回成功是最难查的故障，
+ *    回读为空即判定失败（宁可报错，也不能假装发送成功）；
+ * 3. **优先点发送按钮，其次回车**：部分平台不绑 Enter，或只认真实按键。
+ *    原实现「回车派发成功就不再点按钮」，导致按钮那条路永远走不到。
+ *
+ * 失败码：`no-input` / `no-setter` / `set-failed`，由上层映射成可自助解决的说明。
  */
 export function buildSimulatedSendScript(
   text: string,
@@ -25,43 +31,93 @@ export function buildSimulatedSendScript(
   var INPUT_SELECTORS = ${JSON.stringify(inputSelectors)}
   var BTN_SELECTORS = ${JSON.stringify(buttonSelectors)}
 
-  var input = null
-  for (var i = 0; i < INPUT_SELECTORS.length; i++) {
-    var el = document.querySelector(INPUT_SELECTORS[i])
-    if (el) { input = el; break }
+  function visible(el) {
+    if (!el || el.disabled || el.readOnly) return false
+    var r = el.getBoundingClientRect()
+    return r.width > 8 && r.height > 8
   }
+
+  function pick(list) {
+    var first = null
+    for (var i = 0; i < list.length; i++) {
+      var el = document.querySelector(list[i])
+      if (!el) continue
+      if (!first) first = el
+      if (visible(el)) return el
+    }
+    // 候选选择器是按平台精挑的：全都不「可见」时仍取第一个（可能只是尚未完成布局），
+    // 由下面的回读校验把关，而不是直接放弃
+    return first
+  }
+
+  var input = pick(INPUT_SELECTORS)
   if (!input) return 'no-input'
 
   try { input.focus() } catch (e) {}
 
-  if (input.isContentEditable) {
-    input.textContent = TEXT
-    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: TEXT, inputType: 'insertText' }))
-  } else {
+  function readBack() {
+    if (input.isContentEditable) return String(input.textContent || '')
+    return String(input.value || '')
+  }
+
+  function fill() {
+    if (input.isContentEditable) {
+      try {
+        input.focus()
+        if (document.execCommand && document.execCommand('insertText', false, TEXT)) return true
+      } catch (e) { /* 落到 textContent */ }
+      input.textContent = TEXT
+      try {
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: TEXT, inputType: 'insertText' }))
+      } catch (e) {
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      return true
+    }
     var proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
     var desc = Object.getOwnPropertyDescriptor(proto, 'value')
-    if (!desc || !desc.set) return 'no-setter'
+    if (!desc || !desc.set) return false
     desc.set.call(input, '')
     input.dispatchEvent(new Event('input', { bubbles: true }))
     desc.set.call(input, TEXT)
     input.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  }
+
+  if (!fill()) return 'no-setter'
+
+  // 回读校验：文本没进去就如实失败，绝不静默「发送成功」
+  var back = readBack().replace(/\s+/g, '')
+  if (!back) return 'set-failed'
+
+  function findButton() {
+    for (var i = 0; i < BTN_SELECTORS.length; i++) {
+      var b = document.querySelector(BTN_SELECTORS[i])
+      if (b && !b.disabled) return b
+    }
+    return null
   }
 
   setTimeout(function () {
-    var sentByKey = false
-    try {
-      input.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
-      }))
-      sentByKey = true
-    } catch (e) {}
-    if (!sentByKey) {
-      for (var j = 0; j < BTN_SELECTORS.length; j++) {
-        var btn = document.querySelector(BTN_SELECTORS[j])
-        if (btn) { btn.click(); break }
-      }
+    var via = 'none'
+    var btn = findButton()
+    if (btn) {
+      try { btn.click(); via = 'button' } catch (e) { via = 'button-error' }
     }
-    window.postMessage({ __LDA__: sentByKey ? 'send-done' : 'send-fallback' }, '*')
+    if (via !== 'button') {
+      try {
+        input.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
+        }))
+        input.dispatchEvent(new KeyboardEvent('keypress', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
+        }))
+        via = 'enter'
+      } catch (e) { via = 'enter-error' }
+    }
+    try {
+      window.postMessage({ __LDA__: 'send-submit', via: via, len: back.length }, '*')
+    } catch (e) {}
   }, 200 + Math.floor(Math.random() * 400))
 
   return 'queued'

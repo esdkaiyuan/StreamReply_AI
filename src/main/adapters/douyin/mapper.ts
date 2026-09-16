@@ -99,3 +99,28 @@ export function mapDouyinMessage(
       return null
   }
 }
+
+/**
+ * 在线人数。
+ *
+ * 抖音把它放在 **`WebcastRoomUserSeqMessage`**（`total` 字段号 3，int64）——
+ * 与弹幕共用同一条 IM 通道，所以解析帧时顺路取出即可，不必额外发请求。
+ *
+ * 取值失败一律返回 `undefined`：宁可 UI 不显示人数，也不能显示一个错的数字。
+ * ⚠️ 字段号取自公开 `douyin.proto`，**尚未在真实直播间核对**；
+ * 联调时若人数明显不对，先回来查这里的 method 名与字段号。
+ */
+export function readDouyinOnlineCount(method: string, payload: Buffer): number | undefined {
+  if (method !== 'WebcastRoomUserSeqMessage') return undefined
+  try {
+    const msg = decodeMessage(payload)
+    // ⚠️ 必须先判字段存在：asNumber 对**缺失字段**返回 0，与「在线人数真的是 0」无法区分，
+    // 直接用会把空 payload 变成「0 人在线」这种假数据。
+    if (!msg.get(3)?.length) return undefined
+    const total = asNumber(msg, 3)
+    if (Number.isFinite(total) && total >= 0) return Math.floor(total)
+  } catch {
+    /* 坏帧忽略，不影响同帧里的其它消息 */
+  }
+  return undefined
+}

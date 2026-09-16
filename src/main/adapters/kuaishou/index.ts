@@ -1,4 +1,5 @@
 import type { CaptureSource } from '../../../shared/types'
+import { followRedirect } from '../../net/resolveShareLink'
 import { KS_HOOK_SCRIPT } from '../../webview/inject/ksHook'
 import { buildKuaishouSendScript } from '../../webview/inject/ksSender'
 import type { FrameResult, PlatformAdapter } from '..'
@@ -19,6 +20,15 @@ export const kuaishouAdapter: PlatformAdapter = {
   isDanmakuWs: (url) => /kuaishou|kwai|live-ws/i.test(url),
 
   parseRoomId: parseKuaishouRoomId,
+
+  /**
+   * 分享短链归一化：`v.kuaishou.com/xxx` 里没有主播 ID，必须跳转一次拿到 `/u/<id>`。
+   * 离线解析只能是猜，所以真发一次请求（失败则回退原值，由 parseRoomId 报「无法解析」）。
+   */
+  normalizeInput: async (input) => {
+    if (!/v\.kuaishou\.com|kuaishou\.com\/short/i.test(input)) return input
+    return followRedirect(input)
+  },
 
   parseFrame(raw: Buffer, roomId: string, source: CaptureSource): FrameResult {
     const message = parseSocketMessage(raw)

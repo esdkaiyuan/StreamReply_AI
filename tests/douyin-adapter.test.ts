@@ -1,7 +1,8 @@
 import { gzipSync } from 'zlib'
 import { describe, expect, it } from 'vitest'
+import { douyinAdapter } from '../src/main/adapters/douyin'
 import { parsePushFrame } from '../src/main/adapters/douyin/frame'
-import { mapDouyinMessage } from '../src/main/adapters/douyin/mapper'
+import { mapDouyinMessage, readDouyinOnlineCount } from '../src/main/adapters/douyin/mapper'
 import type { DanmakuMessage } from '../src/shared/types'
 import { bytes, msg, num, tag, text, varintBig } from './proto-enc'
 
@@ -107,5 +108,71 @@ describe('douyin mapper', () => {
   it('未知 method 与空 payload 返回 null', () => {
     expect(mapDouyinMessage('WebcastUnknownMessage', Buffer.from([...num(1, 1)]), roomId)).toBeNull()
     expect(mapDouyinMessage('WebcastChatMessage', Buffer.alloc(0), roomId)).toBeNull()
+  })
+})
+
+describe('抖音在线人数（WebcastRoomUserSeqMessage）', () => {
+  /** RoomUserSeqMessage: 1=common, 2=ranksList, 3=total */
+  function roomUserSeqPayload(total: number): number[] {
+    return [...msg(1, num(3, 7001)), ...num(3, total)]
+  }
+
+  it('从 total(3) 取出在线人数', () => {
+    const payload = Buffer.from(roomUserSeqPayload(12345))
+    expect(readDouyinOnlineCount('WebcastRoomUserSeqMessage', payload)).toBe(12345)
+  })
+
+  it('其它 method 不产出人数（避免把弹幕字段误当人数）', () => {
+    const payload = Buffer.from(chatPayload('甲', '你好'))
+    expect(readDouyinOnlineCount('WebcastChatMessage', payload)).toBeUndefined()
+  })
+
+  it('缺字段或坏帧时返回 undefined，不抛异常', () => {
+    expect(readDouyinOnlineCount('WebcastRoomUserSeqMessage', Buffer.from([]))).toBeUndefined()
+    expect(
+      readDouyinOnlineCount('WebcastRoomUserSeqMessage', Buffer.from([0xff, 0xff, 0xff]))
+    ).toBeUndefined()
+  })
+
+  it('适配器把人数回填到 FrameResult.onlineCount，且不把它当成弹幕', () => {
+    const frame = pushFrame([imMessage('WebcastRoomUserSeqMessage', roomUserSeqPayload(8888))])
+    const result = douyinAdapter.parseFrame(frame, '123', 'ws')
+
+    expect(result.onlineCount).toBe(8888)
+    expect(result.danmaku).toHaveLength(0)
+  })
+
+  it('同一帧里同时有弹幕与人数时两者都要拿到', () => {
+    const frame = pushFrame([
+      imMessage('WebcastChatMessage', chatPayload('乙', '主播好')),
+      imMessage('WebcastRoomUserSeqMessage', roomUserSeqPayload(777))
+    ])
+    const result = douyinAdapter.parseFrame(frame, '123', 'ws')
+
+    expect(result.onlineCount).toBe(777)
+    expect(result.danmaku).toHaveLength(1)
+    expect(result.danmaku[0]!.content).toBe('主播好')
+  })
+})
+
+describe('抖音适配器抓取通道声明', () => {
+  it('抖音走 CDP 抓帧（能覆盖 Worker 内的连接）', () => {
+    expect(douyinAdapter.captureViaCdp).toBe(true)
+  })
+
+  it('能识别抖音弹幕 WS 端点', () => {
+    expect(
+      douyinAdapter.isDanmakuWs(
+        'wss://webcast5-ws-web-lf.douyin.com/webcast/im/push/v2/?app_name=douyin_web&signature=x'
+      )
+    ).toBe(true)
+    // 页面里的埋点/长连接不应被当成弹幕通道
+    expect(douyinAdapter.isDanmakuWs('wss://mon.zijieapi.com/monitor_browser/collect')).toBe(false)
+  })
+
+  it('能识别疑似 HTTP 推流端点（用于诊断上报）', () => {
+    expect(
+      douyinAdapter.isDanmakuStream?.('https://webcast5-ws-web-lf.douyin.com/webcast/im/fetch/?k=1', '')
+    ).toBe(true)
   })
 })
