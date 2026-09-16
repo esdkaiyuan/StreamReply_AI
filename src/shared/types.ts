@@ -30,6 +30,8 @@ export interface RoomStatEvent {
   roomId: string
   onlineCount?: number
   danmakuRate: number
+  /** 该房间累计收到的弹幕条数（用于自查抓取是否在工作） */
+  danmakuCount?: number
   ts: number
 }
 

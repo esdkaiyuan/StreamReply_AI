@@ -24,6 +24,7 @@ onMounted(() => {
   window.lda.onRoomStat((s) => {
     rate.value = s.danmakuRate
     if (s.onlineCount) online.value = s.onlineCount
+    if (s.danmakuCount !== undefined) rooms.setCount(s.roomId, s.danmakuCount)
   })
 })
 </script>

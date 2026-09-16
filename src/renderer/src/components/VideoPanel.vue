@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { VideoRect } from '../../../shared/types'
 import { useRoomStore } from '../stores/rooms'
 import { useUiStore } from '../stores/ui'
@@ -14,11 +14,32 @@ import { useUiStore } from '../stores/ui'
 const rooms = useRoomStore()
 const ui = useUiStore()
 
+const wrap = ref<HTMLElement | null>(null)
 const slot = ref<HTMLElement | null>(null)
 const selected = ref('')
 const collapsed = ref(false)
+/** 拖拽后的自定义高度；null 表示按 16:9 自适应 */
+const manualHeight = ref<number | null>(null)
+const autoHeight = ref(240)
+const dragging = ref(false)
 
 const candidates = computed(() => rooms.rooms.filter((r) => r.status !== 'closed'))
+const height = computed(() => manualHeight.value ?? autoHeight.value)
+
+const MIN_H = 120
+
+/**
+ * 默认高度取「栏宽 × 9/16」，正好贴合 16:9 不留黑边；
+ * 上限为「窗口高度 - 240px」，给弹幕列表与工具栏留出空间。
+ * （不要用父元素的 clientHeight：父级是 .vp 自身，高度由本面板决定，会算成死循环）
+ */
+function recomputeAuto(): void {
+  const w = wrap.value?.clientWidth ?? 0
+  if (!w) return
+  const byRatio = Math.round((w * 9) / 16)
+  const cap = Math.round(window.innerHeight) - 240
+  autoHeight.value = Math.max(MIN_H, Math.min(byRatio, cap))
+}
 
 function measure(): VideoRect | null {
   const el = slot.value
@@ -64,51 +85,104 @@ watch(
 )
 
 watch([selected, collapsed, () => ui.modalOpen], send)
+// 高度变化会改变原生视图的位置，等 DOM 生效后再上报
+watch(height, async () => {
+  await nextTick()
+  send()
+})
 
 let observer: ResizeObserver | null = null
 onMounted(async () => {
   await rooms.refresh()
-  if (slot.value) {
-    observer = new ResizeObserver(sendThrottled)
-    observer.observe(slot.value)
+  recomputeAuto()
+  if (wrap.value) {
+    observer = new ResizeObserver(() => {
+      recomputeAuto()
+      sendThrottled()
+    })
+    observer.observe(wrap.value)
   }
-  window.addEventListener('resize', sendThrottled)
+  window.addEventListener('resize', onWindowResize)
   send()
 })
 
 onUnmounted(() => {
   observer?.disconnect()
-  window.removeEventListener('resize', sendThrottled)
+  window.removeEventListener('resize', onWindowResize)
+  window.removeEventListener('mousemove', onGripMove)
+  window.removeEventListener('mouseup', onGripUp)
   if (raf) cancelAnimationFrame(raf)
   window.lda.setVideoTarget(null, null)
 })
+
+function onWindowResize(): void {
+  recomputeAuto()
+  sendThrottled()
+}
+
+/** 拖拽下边缘调整画面高度；双击恢复 16:9 自适应 */
+let dragStartY = 0
+let dragStartH = 0
+
+function onGripDown(e: MouseEvent): void {
+  dragging.value = true
+  dragStartY = e.clientY
+  dragStartH = height.value
+  window.addEventListener('mousemove', onGripMove)
+  window.addEventListener('mouseup', onGripUp)
+  e.preventDefault()
+}
+
+function onGripMove(e: MouseEvent): void {
+  const next = dragStartH + (e.clientY - dragStartY)
+  manualHeight.value = Math.max(MIN_H, Math.min(next, Math.round(window.innerHeight * 0.7)))
+}
+
+function onGripUp(): void {
+  dragging.value = false
+  window.removeEventListener('mousemove', onGripMove)
+  window.removeEventListener('mouseup', onGripUp)
+  send()
+}
+
+function resetHeight(): void {
+  manualHeight.value = null
+  recomputeAuto()
+}
 </script>
 
 <template>
-  <section class="vp">
-    <div class="vp-head">
-      <button class="vp-toggle" @click="collapsed = !collapsed">
-        {{ collapsed ? '▶' : '▼' }} 📺 直播画面
-      </button>
-      <select v-if="!collapsed" v-model="selected" class="input-cartoon vp-room">
-        <option value="" disabled>选择房间</option>
-        <option v-for="r in candidates" :key="r.roomId" :value="r.roomId">
-          {{ r.platform }} · {{ r.roomId }}
-        </option>
-      </select>
-      <span v-if="!collapsed && candidates.length" class="vp-hint">仅当前房间出声</span>
-    </div>
-    <div v-show="!collapsed" ref="slot" class="vp-slot">
-      <p v-if="!candidates.length" class="vp-empty">
-        添加直播间后这里会显示画面<br />
-        <span class="vp-sub">（画面来自后台已加载的直播间页面，不额外消耗带宽）</span>
-      </p>
+  <section class="vp" :class="{ dragging }">
+    <div ref="wrap" class="vp-wrap">
+      <div class="vp-head">
+        <button class="vp-toggle" @click="collapsed = !collapsed">
+          {{ collapsed ? '▶' : '▼' }} 📺 直播画面
+        </button>
+        <select v-if="!collapsed" v-model="selected" class="input-cartoon vp-room">
+          <option value="" disabled>选择房间</option>
+          <option v-for="r in candidates" :key="r.roomId" :value="r.roomId">
+            {{ r.platform }} · {{ r.roomId }}
+          </option>
+        </select>
+        <span v-if="!collapsed && candidates.length" class="vp-hint">
+          仅当前房间出声 ｜ 按原比例自适应（拖下边缘调高，双击复位）
+        </span>
+      </div>
+      <div v-show="!collapsed" ref="slot" class="vp-slot" :style="{ height: height + 'px' }">
+        <p v-if="!candidates.length" class="vp-empty">
+          添加直播间后这里会显示画面<br />
+          <span class="vp-sub">（只保留播放器，页面其他区块已隐藏）</span>
+        </p>
+      </div>
+      <div v-if="!collapsed" class="vp-grip" @mousedown="onGripDown" @dblclick="resetHeight" />
     </div>
   </section>
 </template>
 
 <style scoped>
-.vp { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+.vp { flex: 0 0 auto; }
+.vp.dragging { user-select: none; }
+.vp-wrap { display: flex; flex-direction: column; gap: 6px; }
 .vp-head { display: flex; align-items: center; gap: 8px; }
 .vp-toggle {
   font: inherit; font-size: 12px; font-weight: 700; padding: 2px 10px; cursor: pointer;
@@ -118,14 +192,23 @@ onUnmounted(() => {
 .vp-room { width: 150px; font-size: 12px; }
 .vp-hint { font-size: 11px; opacity: 0.5; }
 .vp-slot {
-  height: clamp(150px, 32vh, 360px);
   display: grid;
   place-items: center;
-  background: #16161f;
+  background: #000;
   border: 1.5px solid var(--ink);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
 .vp-empty { color: #cfcfe0; font-size: 12.5px; text-align: center; line-height: 1.8; }
 .vp-sub { opacity: 0.55; font-size: 11px; }
+/* 拖拽手柄：贴着画面下边缘 */
+.vp-grip {
+  height: 8px; margin-top: -4px; cursor: ns-resize; position: relative; z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+}
+.vp-grip::after {
+  content: ''; width: 46px; height: 3px; border-radius: 2px;
+  background: rgba(43, 43, 58, 0.35);
+}
+.vp-grip:hover::after { background: var(--accent); }
 </style>

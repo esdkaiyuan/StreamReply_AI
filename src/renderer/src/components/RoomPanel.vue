@@ -61,7 +61,12 @@ onMounted(() => {
       <li v-for="r in store.rooms" :key="r.roomId" class="room-row">
         <span class="room-dot" :style="{ background: STATUS_DOT[r.status] }" />
         <span class="room-id">{{ PLATFORM_LABEL[r.platform] ?? r.platform }} {{ r.roomId }}</span>
-        <span class="room-status">{{ STATUS_LABEL[r.status] }}</span>
+        <span class="room-status">
+          {{ STATUS_LABEL[r.status] }}
+          <b v-if="store.counts[r.roomId] !== undefined" class="room-count">
+            {{ store.counts[r.roomId] }} 条
+          </b>
+        </span>
         <button class="room-remove" title="移除" @click="store.remove(r.roomId)">×</button>
       </li>
     </ul>
@@ -79,5 +84,6 @@ onMounted(() => {
 .room-dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--ink); flex: none; }
 .room-id { font-weight: 700; font-size: 13px; }
 .room-status { font-size: 11px; opacity: 0.7; margin-left: auto; }
+.room-count { color: #0a7d43; font-weight: 700; }
 .room-remove { border: none; background: none; font-size: 16px; cursor: pointer; color: #e05656; }
 </style>

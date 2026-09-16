@@ -4,6 +4,7 @@ import type { CaptureSource, Platform, RoomInfo, RoomStatus, SendResult } from '
 import { FRAME_CHANNELS, IPC } from '../../shared/types'
 import { getAdapter, type DirectClient, type DirectHooks, type PlatformAdapter } from '../adapters'
 import { bus } from './bus'
+import { CLEAR_VIDEO_MODE_SCRIPT, PLAYER_FRAME_RE, VIDEO_MODE_SCRIPT } from './inject/videoMode'
 
 interface RoomSession {
   info: RoomInfo
@@ -15,6 +16,8 @@ interface RoomSession {
   watchdog: NodeJS.Timeout
   /** 主进程直连抓取客户端；非空时它是弹幕帧的唯一来源，页面侧信号一律忽略 */
   direct: DirectClient | null
+  /** 页面是否已切到「纯视频模式」（避免每次尺寸变化重复注入） */
+  videoMode: boolean
 }
 
 const rooms = new Map<string, RoomSession>()
@@ -110,7 +113,8 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
     domMode: false,
     retryCount: 0,
     watchdog: null as unknown as NodeJS.Timeout,
-    direct: null
+    direct: null,
+    videoMode: false
   }
   rooms.set(roomId, session)
 
@@ -139,6 +143,8 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   }
 
   view.webContents.on('dom-ready', async () => {
+    // 页面重载后 window 是新的一份，纯视频模式需要重新应用（含播放器 iframe）
+    if (session.videoMode) void applyVideoMode(session)
     // 直连模式下页面只承担「发送」职责，不注入 WS hook，避免与直连形成双源
     if (session.direct) return
     await view.webContents.executeJavaScript(adapter.injectScript()).catch(() => 'inject-failed')
@@ -308,6 +314,46 @@ export function reloadAllRooms(): void {
 /** 当前正在展示画面的房间（仅用于日志与切台判断） */
 let videoTargetRoomId: string | null = null
 
+/** 承载播放器的子 frame（B 站用 live.bilibili.com/blanc/<room> 承载，顶层看不到 <video>） */
+function playerFrames(room: RoomSession): Electron.WebFrameMain[] {
+  try {
+    const main = room.view.webContents.mainFrame
+    return main.framesInSubtree.filter((f) => f !== main && PLAYER_FRAME_RE.test(f.url))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 应用「纯视频模式」。
+ * 顶层文档先裁一次（隐藏页面其他区块），再**进到播放器 iframe 内裁第二次**——
+ * B 站把 <video> 放在 blanc iframe 里，只在顶层注入是找不到视频的。
+ */
+async function applyVideoMode(room: RoomSession): Promise<void> {
+  const wc = room.view.webContents
+  await wc.executeJavaScript(VIDEO_MODE_SCRIPT).catch(() => undefined)
+  // iframe 可能还没建好，重试几次；房间已切走就放弃
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (!room.videoMode) return
+    const frames = playerFrames(room)
+    if (frames.length) {
+      await Promise.all(
+        frames.map((f) => f.executeJavaScript(VIDEO_MODE_SCRIPT).catch(() => undefined))
+      )
+      console.log(`[wv] 纯视频模式已应用（含 ${frames.length} 个播放器 iframe）`)
+      return
+    }
+    await new Promise((r) => setTimeout(r, 1200))
+  }
+}
+
+async function clearVideoMode(room: RoomSession): Promise<void> {
+  const wc = room.view.webContents
+  await wc.executeJavaScript(CLEAR_VIDEO_MODE_SCRIPT).catch(() => undefined)
+  const frames = playerFrames(room)
+  await Promise.all(frames.map((f) => f.executeJavaScript(CLEAR_VIDEO_MODE_SCRIPT).catch(() => undefined)))
+}
+
 export function setVideoTarget(roomId: string | null, rect: VideoRect | null): void {
   const usable =
     roomId !== null &&
@@ -316,9 +362,12 @@ export function setVideoTarget(roomId: string | null, rect: VideoRect | null): v
     rect.height >= MIN_VISIBLE_SIZE
 
   const next = usable ? roomId : null
+  let logBounds = false
   if (next !== videoTargetRoomId) {
     videoTargetRoomId = next
-    console.log(next ? `[wv] 直播画面切换到房间 ${next}` : '[wv] 直播画面已隐藏')
+    logBounds = true
+    const want = usable ? `${Math.round(rect.width)}x${Math.round(rect.height)}@${Math.round(rect.x)},${Math.round(rect.y)}` : '-'
+    console.log(next ? `[wv] 直播画面切换到房间 ${next} 目标尺寸 ${want}` : '[wv] 直播画面已隐藏')
   }
 
   for (const room of rooms.values()) {
@@ -334,8 +383,22 @@ export function setVideoTarget(roomId: string | null, rect: VideoRect | null): v
       } else {
         room.view.setBounds(OFFSCREEN_BOUNDS)
       }
+      if (show && logBounds) {
+        // 每次切台校验一次：确认真把视图摆到了面板位置（该位置错位会整层盖住弹幕区）
+        const got = room.view.getBounds()
+        console.log(`[wv] 视图 bounds 实际=${got.width}x${got.height}@${got.x},${got.y}`)
+      }
       // 只有正在展示的房间出声：多房间同时播放会声音混叠
       room.view.webContents.setAudioMuted(!show)
+
+      // 展示时把页面裁成「只剩播放器」，移走时还原（只做一次，尺寸变化不重复注入）
+      if (show && !room.videoMode) {
+        room.videoMode = true
+        void applyVideoMode(room)
+      } else if (!show && room.videoMode) {
+        room.videoMode = false
+        void clearVideoMode(room)
+      }
     } catch (err) {
       console.warn('[wv] 调整画面位置失败:', room.info.roomId, String(err))
     }
