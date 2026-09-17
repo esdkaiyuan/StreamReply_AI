@@ -1,0 +1,253 @@
+/**
+ * 多平台账号管理：扫码/窗口登录 → 抓 Cookie 保存 → 多账号切换。
+ *
+ * 设计要点：
+ * - Cookie 从 defaultSession 里按平台域导出后持久化到 electron-store；
+ *   「切换账号」= 清该平台域 cookie → 写回选中账号的 cookie → 重载房间页
+ * - 各平台的「关键登录 Cookie」用于判定登录成功（登录窗口轮询它）
+ * - B 站不在这里（bilibiliAuth 已有完整实现，UI 也独立）
+ */
+import Store from 'electron-store'
+import { session } from 'electron'
+import type { Platform, PlatformAccount, PlatformAccountSnapshot } from '../../shared/types'
+import { reloadAllRooms } from '../webview/webviewManager'
+
+interface StoredAccount {
+  id: string
+  uname: string
+  savedAt: number
+  /** 序列化的 Cookie 列表（写回 session 时还原） */
+  cookies: Array<{ name: string; value: string; domain?: string; path?: string }>
+}
+
+interface PlatformAccountStore {
+  activeId: string | null
+  list: StoredAccount[]
+}
+
+const store = new Store<{ accounts?: Partial<Record<Platform, PlatformAccountStore>> }>({
+  name: 'platform-accounts'
+})
+
+/** 各平台登录配置：登录页 / 会话归属域 / 判定登录成功的关键 Cookie */
+export const PLATFORM_LOGIN: Record<
+  Exclude<Platform, 'bilibili'>,
+  { loginUrl: string; domain: string; sessionCookies: string[]; label: string }
+> = {
+  douyin: {
+    loginUrl: 'https://www.douyin.com/login',
+    domain: 'douyin.com',
+    sessionCookies: ['sessionid', 'sessionid_ss'],
+    label: '抖音'
+  },
+  douyu: {
+    loginUrl: 'https://www.douyu.com/',
+    domain: 'douyu.com',
+    sessionCookies: ['acf_uid', 'yyuid'],
+    label: '斗鱼'
+  },
+  huya: {
+    loginUrl: 'https://www.huya.com/',
+    domain: 'huya.com',
+    sessionCookies: ['yyuid', 'udb_passdata'],
+    label: '虎牙'
+  },
+  kuaishou: {
+    loginUrl: 'https://www.kuaishou.com/',
+    domain: 'kuaishou.com',
+    sessionCookies: ['passToken', 'kuaishou.server.webday7_st'],
+    label: '快手'
+  }
+}
+
+function sesFor(_platform: Platform): Electron.Session {
+  return session.defaultSession
+}
+
+function readStore(platform: Platform): PlatformAccountStore {
+  const all = store.get('accounts') ?? {}
+  return all[platform] ?? { activeId: null, list: [] }
+}
+
+function writeStore(platform: Platform, data: PlatformAccountStore): void {
+  const all = store.get('accounts') ?? {}
+  all[platform] = data
+  store.set('accounts', all)
+}
+
+/** 该平台域下当前生效的 Cookie（导出用） */
+async function exportDomainCookies(platform: Platform): Promise<StoredAccount['cookies']> {
+  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  if (!cfg) return []
+  const list = await sesFor(platform).cookies.get({ domain: cfg.domain })
+  return list
+    .filter((c) => c.value)
+    .map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path }))
+}
+
+function hasAny(list: StoredAccount['cookies'], names: string[]): string | null {
+  for (const n of names) {
+    const hit = list.find((c) => c.name === n && c.value)
+    if (hit) return hit.value
+  }
+  return null
+}
+
+/** 从当前会话判定登录态并返回展示名（uid 优先，无则「已登录」） */
+async function currentLogin(platform: Platform): Promise<{ isLogin: boolean; uname?: string }> {
+  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  if (!cfg) return { isLogin: false }
+  const list = await sesFor(platform).cookies.get({ domain: cfg.domain })
+  const uid = hasAny(list, cfg.sessionCookies)
+  if (!uid) return { isLogin: false }
+  // 昵称类 cookie（各平台不同，能拿到就展示）
+  const nick = hasAny(list, ['acf_nickname', 'username', 'user_name'])
+  return { isLogin: true, uname: nick ? decodeURIComponent(nick) : `账号 ${uid.slice(0, 10)}` }
+}
+
+/** 快照：登录态 + 账号列表 + 激活 id */
+export async function getAccountSnapshot(platform: Platform): Promise<PlatformAccountSnapshot> {
+  const cur = await currentLogin(platform)
+  const data = readStore(platform)
+  const accounts: PlatformAccount[] = data.list.map((a) => ({
+    id: a.id,
+    uname: a.uname,
+    savedAt: a.savedAt
+  }))
+  return {
+    platform,
+    isLogin: cur.isLogin,
+    uname: cur.uname,
+    accounts,
+    activeId: data.activeId
+  }
+}
+
+/** 把当前会话的登录态保存为一个账号并激活（登录成功后调用） */
+export async function saveCurrentAccount(platform: Platform): Promise<PlatformAccountSnapshot> {
+  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  if (!cfg) throw new Error(`平台 ${platform} 不支持账号管理`)
+  const cookies = await exportDomainCookies(platform)
+  const uid = hasAny(cookies, cfg.sessionCookies)
+  if (!uid) throw new Error('当前会话没有该平台的登录 Cookie，请先完成登录')
+  const cur = await currentLogin(platform)
+  const data = readStore(platform)
+  // 同一身份（关键 Cookie 值相同）覆盖旧账号，否则新增
+  const existing = data.list.find((a) => {
+    const hit = a.cookies.find((c) => cfg.sessionCookies.includes(c.name) && c.value)
+    return hit && hit.value === uid
+  })
+  const account: StoredAccount = existing ?? {
+    id: `${platform}-${Date.now()}`,
+    uname: '',
+    savedAt: Date.now(),
+    cookies
+  }
+  account.uname = cur.uname ?? account.uname ?? `账号 ${uid.slice(0, 10)}`
+  account.cookies = cookies
+  if (!existing) data.list.unshift(account)
+  data.activeId = account.id
+  writeStore(platform, data)
+  return getAccountSnapshot(platform)
+}
+
+/** 把某账号的 Cookie 写回会话（切换账号） */
+async function applyAccountCookies(
+  platform: Platform,
+  cookies: StoredAccount['cookies']
+): Promise<void> {
+  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  const ses = sesFor(platform)
+  // 先清该平台域的现有 cookie，避免两账号字段混杂
+  await ses.clearStorageData({ origin: `https://www.${cfg.domain}`, storages: ['cookies'] })
+  for (const c of cookies) {
+    const url = `https://www.${cfg.domain}/`
+    await session.defaultSession.cookies.set({
+      url,
+      name: c.name,
+      value: c.value,
+      domain: c.domain ?? `.${cfg.domain}`,
+      path: c.path ?? '/',
+      secure: true,
+      httpOnly: false
+    })
+  }
+}
+
+/** 切换账号：写回 Cookie → 重载房间页 */
+export async function switchAccount(platform: Platform, id: string): Promise<PlatformAccountSnapshot> {
+  const data = readStore(platform)
+  const target = data.list.find((a) => a.id === id)
+  if (!target) throw new Error('账号不存在')
+  await applyAccountCookies(platform, target.cookies)
+  data.activeId = id
+  writeStore(platform, data)
+  reloadAllRooms()
+  return getAccountSnapshot(platform)
+}
+
+/** 删除账号；若删的是激活账号则清会话（回到未登录） */
+export async function removeAccount(platform: Platform, id: string): Promise<PlatformAccountSnapshot> {
+  const data = readStore(platform)
+  data.list = data.list.filter((a) => a.id !== id)
+  if (data.activeId === id) {
+    data.activeId = data.list[0]?.id ?? null
+    if (data.activeId) {
+      const first = data.list[0]
+      await applyAccountCookies(platform, first.cookies)
+    } else {
+      const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+      await sesFor(platform).clearStorageData({ origin: `https://www.${cfg.domain}`, storages: ['cookies'] })
+    }
+  }
+  writeStore(platform, data)
+  reloadAllRooms()
+  return getAccountSnapshot(platform)
+}
+
+/** 退出当前登录（清会话 + 取消激活；账号记录保留，可随时切换回来） */
+export async function platformLogout(platform: Platform): Promise<PlatformAccountSnapshot> {
+  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  if (cfg) {
+    await sesFor(platform).clearStorageData({ origin: `https://www.${cfg.domain}`, storages: ['cookies'] })
+  }
+  const data = readStore(platform)
+  data.activeId = null
+  writeStore(platform, data)
+  reloadAllRooms()
+  return getAccountSnapshot(platform)
+}
+
+/** Cookie 导入登录：解析粘贴文本 → 写入会话 → 保存为账号 */
+export async function platformCookieLogin(
+  platform: Platform,
+  raw: string
+): Promise<PlatformAccountSnapshot> {
+  const pairs = raw
+    .split(/[\n;]+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const i = line.indexOf('=')
+      return i > 0 ? { name: line.slice(0, i).trim(), value: line.slice(i + 1).trim() } : null
+    })
+    .filter((x): x is { name: string; value: string } => !!x)
+  if (!pairs.length) throw new Error('未能解析出任何 Cookie，请检查格式（name=value; ...）')
+  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  const ses = sesFor(platform)
+  for (const c of pairs) {
+    await ses.cookies.set({
+      url: `https://www.${cfg.domain}/`,
+      name: c.name,
+      value: c.value,
+      domain: `.${cfg.domain}`,
+      path: '/',
+      secure: true
+    })
+  }
+  const cur = await currentLogin(platform)
+  if (!cur.isLogin) {
+    throw new Error(`Cookie 已写入但未见登录标识（缺 ${cfg.sessionCookies.join(' 或 ')}），请确认复制的是登录后的 Cookie`)
+  }
+  return saveCurrentAccount(platform)
+}

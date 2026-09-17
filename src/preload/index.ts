@@ -67,6 +67,19 @@ const api = {
     ipcRenderer.invoke(IPC.authCookieSet, raw),
   openLoginWindow: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.authOpenLoginWindow),
   logout: (): Promise<LoginState> => ipcRenderer.invoke(IPC.authLogout),
+  /** 多平台账号体系（抖音/斗鱼/虎牙/快手） */
+  getPlatformAccounts: (platform: string): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.authPlatformState, platform),
+  openPlatformLoginWindow: (platform: string): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.authPlatformLoginWindow, platform),
+  platformCookieLogin: (platform: string, raw: string): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.authPlatformCookieSet, platform, raw),
+  platformSwitchAccount: (platform: string, id: string): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.authPlatformSwitch, platform, id),
+  platformRemoveAccount: (platform: string, id: string): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.authPlatformRemove, platform, id),
+  platformLogout: (platform: string): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.authPlatformLogout, platform),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsGet),
   setSettings: (patch: Partial<AppSettings>): Promise<AppSettings> =>
     ipcRenderer.invoke(IPC.settingsSet, patch)

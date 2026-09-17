@@ -6,6 +6,7 @@ import ReplyPanel from './components/ReplyPanel.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
 import LoginPanel from './components/LoginPanel.vue'
+import AccountPanel from './components/AccountPanel.vue'
 import VideoPanel from './components/VideoPanel.vue'
 import { useAiStore } from './stores/ai'
 import { useDanmakuStore } from './stores/danmaku'
@@ -37,6 +38,7 @@ onMounted(() => {
       <span class="stat">👥 {{ online ?? '--' }}</span>
       <div class="topbar__settings">
         <LoginPanel />
+        <AccountPanel />
         <SettingsDrawer />
       </div>
     </header>

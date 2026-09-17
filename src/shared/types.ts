@@ -80,6 +80,13 @@ export const IPC = {
   authCookieSet: 'auth:cookie-set',
   authOpenLoginWindow: 'auth:open-login-window',
   authLogout: 'auth:logout',
+  authPlatformState: 'auth:platform-state',
+  authPlatformLoginWindow: 'auth:platform-login-window',
+  authPlatformCookieSet: 'auth:platform-cookie-set',
+  authPlatformLogout: 'auth:platform-logout',
+  authPlatformAccounts: 'auth:platform-accounts',
+  authPlatformSwitch: 'auth:platform-switch',
+  authPlatformRemove: 'auth:platform-remove',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set'
 } as const
@@ -244,6 +251,21 @@ export interface QrSession {
   qrDataUrl: string
   key: string
   expiresAt: number
+}
+
+export interface PlatformAccount {
+  id: string
+  uname: string
+  savedAt: number
+}
+
+/** 某平台的账号管理快照：登录态 + 已保存账号列表 + 当前激活 */
+export interface PlatformAccountSnapshot {
+  platform: Platform
+  isLogin: boolean
+  uname?: string
+  accounts: PlatformAccount[]
+  activeId: string | null
 }
 
 export interface QrPollResult {
