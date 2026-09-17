@@ -28,6 +28,23 @@ export interface PlatformAdapter {
   /** 注入页面主世界的抓取脚本 */
   injectScript(): string
   /**
+   * 判断某次导航是否应被**强制拦截**（可选）。
+   *
+   * 背景：有的平台会在页面成功加载后用前端 JS 把自己跳到「错误页」
+   * （虎牙实测：房间页加载完成后 1~3 秒被跳到 error?errorType=ROOM_NOT_FOUND，
+   * 而 curl 同一 URL 返回正常房间页）。这类跳转在 Electron 的 will-navigate
+   * 层可以可靠拦下 —— 页面停在原位，DOM 兜底照常工作。
+   */
+  isBlockedNavigation?(url: string): boolean
+  /**
+   * 进房前的会话重置（可选）。
+   *
+   * 虎牙实测：userData 里残留的 huya Cookie 会让服务端把房间页请求 302 到
+   * error?errorType=ROOM_NOT_FOUND（curl 无 Cookie 反而正常）。进房前清掉
+   * 该站 Cookie 即恢复。⚠️ 会同时清掉登录态 —— 接入虎牙登录后需要改写这里。
+   */
+  resetSession?(): Promise<void>
+  /**
    * 进房间前的**预热地址**（可选）。
    *
    * 有些平台直接打开房间页会被服务端/前端判定为异常（302 到错误页），

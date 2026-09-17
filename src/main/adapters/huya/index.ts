@@ -1,3 +1,4 @@
+import { session } from 'electron'
 import type { CaptureSource, DanmakuMessage } from '../../../shared/types'
 import { DOM_OBSERVER_SCRIPT } from '../../webview/inject/domObserver'
 import { buildHuyaSendScript } from '../../webview/inject/huyaSender'
@@ -31,6 +32,31 @@ export const huyaAdapter: PlatformAdapter = {
    * 这是虎牙当前**主抓取通道**。
    */
   domFallbackScript: () => DOM_OBSERVER_SCRIPT,
+
+  /**
+   * ⚠️ 拦截「房间页 → 错误页」的前端跳转（2026-09-18 实测有效手段）。
+   *
+   * 虎牙会在房间页加载完成后用 JS 把页面跳到 error?errorType=ROOM_NOT_FOUND
+   * （服务端实际返回了正常房间页）。在 will-navigate 层拦下后页面停在原位，
+   * 聊天列表照常渲染，DOM 兜底即可抓取。
+   */
+  isBlockedNavigation: (url) => /huya\.com\/error/i.test(url),
+
+  /**
+   * ⚠️ 必须「清 Cookie → 访首页 → 进房间」三步走（2026-09-18 完整实验链结论）：
+   * 1. 残留 Cookie 会让服务端把房间页 302 到错误页 → 进房前 resetSession 清掉；
+   * 2. 清完后首次进房没有游客身份，弹幕区不初始化（聊天列表只有系统消息）→
+   *    先访一次首页让服务端下发游客 Cookie，再进房间弹幕组件即正常挂载。
+   */
+  warmupUrl: () => 'https://www.huya.com/',
+
+  /** 清掉残留 Cookie：实测是房间页被 302 到错误页的直接原因（见接口注释） */
+  resetSession: async () => {
+    await session.defaultSession.clearStorageData({
+      origin: 'https://www.huya.com',
+      storages: ['cookies']
+    })
+  },
 
   /**
    * 虎牙 WS 端点判定。

@@ -14,6 +14,8 @@ interface RoomSession {
   gotWsMeta: boolean
   domMode: boolean
   retryCount: number
+  /** 被平台跳到异常页后「拉回房间页」的次数（防无限循环） */
+  navRetries: number
   watchdog: NodeJS.Timeout
   /** 主进程直连抓取客户端；非空时它是弹幕帧的唯一来源，页面侧信号一律忽略 */
   direct: DirectClient | null
@@ -128,6 +130,7 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
     gotWsMeta: false,
     domMode: false,
     retryCount: 0,
+    navRetries: 0,
     watchdog: null as unknown as NodeJS.Timeout,
     direct: null,
     cdp: null,
@@ -144,8 +147,36 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   // 默认静音：只有被 UI 指定为「当前画面」的房间才出声（见 setVideoTarget）
   view.webContents.setAudioMuted(true)
 
-  // 预热（仅配置了 warmupUrl 的平台）：部分站点直接打开房间页会被判定异常并 302 到错误页，
-  // 先访问一次首页建立会话即正常。放在所有抓取分支之前，失败也继续尝试进房间。
+  // 平台声明的「异常导航」一律拦截（如虎牙把房间页前端跳到错误页）。
+  // 拦下后页面停在原位，DOM 兜底照常工作；正常导航不受影响。
+  view.webContents.on('will-navigate', (e, url) => {
+    if (adapter.isBlockedNavigation?.(url)) {
+      e.preventDefault()
+      console.warn(`[wv] 已拦截 ${platform} 的异常跳转: ${String(url).slice(0, 80)}`)
+    }
+  })
+  // 跳回手段：部分平台的跳转不走 will-navigate（如 history 替换）或拦不住，
+  // 一旦真的落在异常页，延迟片刻拉回房间页 —— 每次回到房间页，弹幕组件都会
+  // 重新初始化，DOM 兜底在窗口期内即可抓到弹幕。限次防无限循环。
+  view.webContents.on('did-navigate', (_e, url) => {
+    if (!adapter.isBlockedNavigation?.(url)) return
+    if (!alive() || session.navRetries >= 3) return
+    session.navRetries += 1
+    console.warn(
+      `[wv] ${platform} 落在异常页，第 ${session.navRetries}/3 次拉回房间页: ${String(url).slice(0, 70)}`
+    )
+    setTimeout(() => {
+      if (!alive() || session.domMode) return
+      void view.webContents.loadURL(adapter.roomUrl(roomId)).catch(() => undefined)
+    }, 1500)
+  })
+
+  // 进房准备（仅平台声明时执行）：清残留会话 / 预热首页。失败都继续尝试进房间。
+  try {
+    await adapter.resetSession?.()
+  } catch (err) {
+    console.warn(`[wv] ${platform} 会话重置失败（继续进房间）：`, String(err))
+  }
   if (adapter.warmupUrl) {
     console.log(`[wv] ${platform} 预热首页：${adapter.warmupUrl()}`)
     try {
