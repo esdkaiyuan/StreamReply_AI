@@ -41,13 +41,6 @@ export const huyaAdapter: PlatformAdapter = {
    * 注意：即使这里判错，CDP 通道仍会把帧上送、由 `parseFrame` 做内容校验，
    * 所以此正则只影响过滤效率，不影响能否抓到。
    */
-  /**
-   * ⚠️ 必须先访首页再进房间：直接打开 `https://www.huya.com/<room>` 会 302 到
-   * `error?errorType=ROOM_NOT_FOUND`（会话异常判定），而 curl 与「先首页后房间」均正常
-   * —— 2026-09-18 隔离实验结论。
-   */
-  warmupUrl: () => 'https://www.huya.com/',
-
   isDanmakuWs: (url) => /wsapi\.huya\.com|cdnws\.api\.huya\.com|-ws\.va\.huya\.com/i.test(url),
 
   parseFrame(raw: Buffer, roomId: string, source: CaptureSource): FrameResult {
