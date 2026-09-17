@@ -124,3 +124,10 @@ export function readDouyinOnlineCount(method: string, payload: Buffer): number |
   }
   return undefined
 }
+
+/**
+ * ⚠️ 人数口径（2026-09-17 真实直播间比对，房间 229768826112）：
+ * `WebcastRoomUserSeqMessage.total(3)` 实测 = 3448，而页面「在线观众」面板显示 719
+ * —— **两者不是同一口径**（协议值明显偏大，更像累计/去重前的观看数）。
+ * UI 展示时不要声称是「当前在线」，避免用户拿页面数字对不上来报 bug。
+ */
