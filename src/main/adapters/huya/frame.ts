@@ -8,9 +8,15 @@ export const HUYA_URI = {
   ONLINE: 8006
 } as const
 
-/** WebSocketCommand 的 iCmdType */
+/** WebSocketCommand 的 iCmdType（完整枚举见虎牙页面自带的 `EWebSocketCommandType`） */
 export const HUYA_CMD = {
+  /** 客户端发起 WUP 请求（如取配置、拉历史） */
+  WUP_REQ: 3,
+  /** 服务端 WUP 响应 */
+  WUP_RSP: 4,
+  /** 服务端消息推送 —— 弹幕/礼物/人气都从这里来 */
   MSG_PUSH: 7,
+  /** 分组消息推送（另一个推送通道，多为系统消息） */
   MSG_PUSH_V2: 22
 } as const
 
@@ -20,24 +26,17 @@ export interface HuyaMessage {
 }
 
 /**
- * WebSocketCommand { 0: iCmdType (INT), 1: data (byte[]) }
- * 进房包与推送包共用这个外层结构。
+ * WebSocketCommand { 0: iCmdType (INT), 1: vData (byte[]), 2: lRequestId, 3: traceId }
+ * （字段号取自虎牙页面自带的 `WebSocketCommand.writeTo`，2026-09-17 核对）
  *
- * ⚠️ **已知缺陷（2026-09-17 实测，尚未修复）**：
- * 真实直播间的帧并不是「裸 Tars 结构」，而是 **WUP/TAF 信封**：
- * 形如 `00 <cmdType> 1d ...`，其中 `0x1D` 的**低半字节是类型 13 —— 标准 JCE/Tars
- * 类型表里没有 13**（只有 0~12），本读取器遇到未知类型会中断，因此对真实帧解出 0 条消息。
+ * ⚠️ 这里**曾经完全解不出真实帧**（45 秒 477 帧命中 0），根因与修复：
+ * 真实帧是 Tars/WUP 信封，形如 `00 03 1d 00 01 00 88 …`，其中 `0x1D` 的低半字节
+ * 是**类型 13 = EN_SIMPLELIST**。JCE 类型表只到 12；Tars 用它编码 `byte[]`，
+ * 而 `vData` / `sMsg` 都是 `byte[]` → 读取器遇到未知类型即中断，什么都取不到。
+ * 修复：`jce.ts` 补上 SIMPLE_LIST(13) 与 MAP(8)（详见那里的注释）。
  *
- * 证据（真实帧已存为测试夹具 `tests/fixtures/huya-frames.json`，取自 live.huya.com/lpl）：
- * - 45 秒抓到 477 帧，`parseHuyaFrame` 命中 0；
- * - 帧内可见 WUP 结构特征字符串：`launch`(servant) / `wsLaunch`(func) / `tReq` / `tRsp` / `HUYA&ZH&2052`；
- * - 客户端注册帧为 `00 03 1d 00 01 00 88 00 00 00 88 10 03 2c 3c 40 ff 56 06 launch 66 08 wsLaunch …`，
- *   其中 `40 ff` = tag4 BYTE(-1) 恰是 `setRequestId(-1)`，与公开实现一致。
- *
- * 离线试解结论：把「类型 13」当作 STRUCT_BEGIN 后能解出上述字符串，
- * 但完整消费整帧仍会在信封内部的 MAP/长度字段处失配 ——
- * 需要拿到虎牙页面自带的 Wup 编解码实现（或 WUP 规范）来确定信封的准确布局后再改。
- * 在修好之前，**本平台抓取不工作**，UI 会如实显示失败而不是假装已连上。
+ * 类型表与整数编码规则均**读自虎牙页面自带的 `JceOutputStream`/`JceInputStream`**，
+ * 不是推测（2026-09-17）。真实帧夹具见 `tests/fixtures/huya-frames.json`。
  */
 export function parseWebSocketCommand(raw: Buffer): { cmdType: number; data: Buffer } | null {
   const cmd = decodeStruct(raw)

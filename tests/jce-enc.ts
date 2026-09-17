@@ -1,4 +1,12 @@
-/** JCE/Tars 编码器（测试用），语义与虎牙各 TarsStruct 的 WriteTo 一致 */
+/**
+ * JCE/Tars 编码器（测试用），语义与虎牙页面自带的 `JceOutputStream` 一致。
+ *
+ * 关键点（2026-09-17 从其实现原文读出，非推测）：
+ * - `writeBytes`（byte[]）走 **SIMPLE_LIST(13)**：`head(tag,13)` + `head(0,INT8)` + 长度 + 原始字节
+ * - `writeString` 走 STRING1/STRING4（与 byte[] 不同，别混用）
+ * - `writeVector` 是 `head(tag,LIST)` + **长度** + 元素（各自带 tag=0 的头），**没有空头收尾**
+ * - 整型是「定长大端 + 类型降级」，0 用 ZERO_TAG
+ */
 
 export const JCE_T = {
   BYTE: 0,
@@ -10,7 +18,8 @@ export const JCE_T = {
   LIST: 9,
   STRUCT_BEGIN: 10,
   STRUCT_END: 11,
-  ZERO: 12
+  ZERO: 12,
+  SIMPLE_LIST: 13
 } as const
 
 export function jHead(tag: number, type: number): number[] {
@@ -33,16 +42,19 @@ export function jLong(tag: number, value: bigint | number): number[] {
   return [...jHead(tag, JCE_T.LONG), ...b]
 }
 
+/** byte[]（对应 Tars 的 `writeBytes`）→ SIMPLE_LIST */
 export function jBytes(tag: number, data: number[] | Buffer): number[] {
   const buf = Buffer.isBuffer(data) ? data : Buffer.from(data)
+  return [...jHead(tag, JCE_T.SIMPLE_LIST), ...jHead(0, JCE_T.BYTE), ...jInt(0, buf.length), ...buf]
+}
+
+/** string（对应 Tars 的 `writeString`）→ STRING1/STRING4 */
+export function jStr(tag: number, s: string): number[] {
+  const buf = Buffer.from(s, 'utf8')
   if (buf.length < 256) return [...jHead(tag, JCE_T.STRING1), buf.length, ...buf]
   const len = Buffer.alloc(4)
   len.writeUInt32BE(buf.length, 0)
   return [...jHead(tag, JCE_T.STRING4), ...len, ...buf]
-}
-
-export function jStr(tag: number, s: string): number[] {
-  return jBytes(tag, Buffer.from(s, 'utf8'))
 }
 
 /** 嵌套结构体：STRUCT_BEGIN … STRUCT_END */
@@ -50,12 +62,11 @@ export function jStruct(tag: number, body: number[]): number[] {
   return [...jHead(tag, JCE_T.STRUCT_BEGIN), ...body, ...jHead(0, JCE_T.STRUCT_END)]
 }
 
-/** 列表：LIST 头 + 每个元素（各自带头）+ 空头收尾 */
+/** 列表：LIST 头 + 长度 + 每个元素（各自带 tag=0 的头） */
 export function jList(tag: number, items: number[][]): number[] {
-  const out = [...jHead(tag, JCE_T.LIST)]
-  items.forEach((item, i) => {
-    out.push(...jHead(i, JCE_T.STRUCT_BEGIN), ...item, ...jHead(0, JCE_T.STRUCT_END))
+  const out = [...jHead(tag, JCE_T.LIST), ...jInt(0, items.length)]
+  items.forEach((item) => {
+    out.push(...jHead(0, JCE_T.STRUCT_BEGIN), ...item, ...jHead(0, JCE_T.STRUCT_END))
   })
-  out.push(0x00) // tag=0 & type=BYTE 的终止头
   return out
 }

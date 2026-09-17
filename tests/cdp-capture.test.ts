@@ -178,7 +178,7 @@ describe('CDP 抓帧通道', () => {
     expect(h.frames).toHaveLength(0)
   })
 
-  it('一旦确认弹幕通道，就跳过其它 WS 的帧（省 CPU 且避免误判）', async () => {
+  it('多条 WS 连接的帧全部上送 —— 不能只认第一条件（虎牙实测教训）', async () => {
     const h = setup()
     await h.capture.start()
     // 真实 CDP 一定先给 webSocketCreated，帧才能映射到 URL
@@ -188,12 +188,12 @@ describe('CDP 抓帧通道', () => {
       requestId,
       response: { opcode: 2, payloadData: b64(Buffer.from([1, 2, 3])) }
     })
-    // 先来自弹幕通道 → 被消费并锁定
-    h.dbg.emit('Network.webSocketFrameReceived', frame('r-danmaku'))
-    // 再来自其它通道 → 应被跳过
     h.dbg.emit('Network.webSocketFrameReceived', frame('r-tracker'))
+    h.dbg.emit('Network.webSocketFrameReceived', frame('r-danmaku'))
 
-    expect(h.frames.map((f) => f.url)).toEqual(['wss://x/danmaku'])
+    // 虎牙页面同时开 10+ 条 WS（弹幕通道不是第一条），
+    // 若按「第一条产出数据的连接」锁定，真正的弹幕通道会被永久忽略
+    expect(h.frames.map((f) => f.url)).toEqual(['wss://x/tracker', 'wss://x/danmaku'])
   })
 
   it('错过 webSocketCreated 时不锁定空串通道（退化为不过滤，而不是全丢）', async () => {

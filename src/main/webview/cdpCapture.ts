@@ -119,8 +119,6 @@ export function createCdpCapture(
 ): CdpCapture {
   let attached = false
   let stopped = false
-  /** 已被确认的弹幕通道 URL；一旦确定就只认它 */
-  let danmakuUrl: string | null = null
   let endpointReported = false
 
   const wsUrls = new Map<string, string>()
@@ -142,15 +140,16 @@ export function createCdpCapture(
 
       case 'Network.webSocketFrameReceived': {
         const url = wsUrls.get(String(p['requestId'] ?? '')) ?? ''
-        // 已锁定通道：其它连接的帧直接跳过
-        if (danmakuUrl !== null && url !== danmakuUrl) return
         const response = (p['response'] ?? {}) as Record<string, unknown>
         const raw = decodeFramePayload(Number(response['opcode']), String(response['payloadData'] ?? ''))
         if (!raw) return
-        const consumed = hooks.onFrame(raw, 'ws', url)
-        // 只有拿到真实 URL 才锁定通道：若 webSocketCreated 没被捕获到（例如在连接建立后才附加
-        // 调试器），这里 url 会是空串，锁成空串会让「只认这个通道」退化成「不过滤」
-        if (consumed && !danmakuUrl && url) danmakuUrl = url
+        // ⚠️ 这里**故意不做「锁定通道后只认它」的过滤**（2026-09-17 实测教训）：
+        // 虎牙页面同时对 10+ 条 WS 连接收发（`*-ws.va.huya.com` 才是弹幕，
+        // `*-server.va.huya.com` 另作他用），按「第一条产出数据的连接」锁定会
+        // **永久忽略真正的弹幕通道** —— 表现为 CDP 只看到 22 帧、
+        // 而页面主世界实际收到 386 条。正确做法是全部上送、由 parseFrame 严格校验
+        // （校验失败的帧自然产出空结果，代价只是几次纯内存解析）。
+        hooks.onFrame(raw, 'ws', url)
         return
       }
 

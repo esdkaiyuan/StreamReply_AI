@@ -4,13 +4,18 @@
  * 编码规则：
  * - 每个字段 = [头][值]，头 1 字节：高 4 位是 tag，低 4 位是类型；
  *   若高 4 位为 15，则 tag 用紧随其后的 1 个字节表示
- * - 多字节整数一律**大端**
+ * - 整型**不是 varint**，而是「定长大端 + 类型降级」：值能塞进更小的类型就用更小的类型，
+ *   等于 0 时直接用 ZERO_TAG（不写数值字节）
  * - STRUCT_BEGIN(10) … STRUCT_END(11) 包裹嵌套结构
+ * - 类型 13（SIMPLE_LIST）是 Tars 在 JCE 上扩展的，用来编码 `byte[]`
  *
  * 注意：JCE 线上**不区分字符串与二进制**，两者都是 STRING1/STRING4，
  * 所以统一按 Buffer 承载，需要文本时再按 utf8 解释（避免二进制体被往返损坏）。
  *
- * 遇到未支持的类型（MAP 等）无法安全跳过，会交出已解析部分而非抛异常。
+ * 遇到无法安全跳过的类型会交出已解析部分而非抛异常（坏帧不能带崩整条抓取链路）。
+ *
+ * 类型表与编码规则取自**虎牙页面自带的 `JceOutputStream`/`JceInputStream`**
+ * （2026-09-17 核对，非推测）。
  */
 
 export const JCE = {
@@ -26,14 +31,32 @@ export const JCE = {
   LIST: 9,
   STRUCT_BEGIN: 10,
   STRUCT_END: 11,
-  ZERO: 12
+  ZERO: 12,
+  /**
+   * Tars 在 JCE 基础上扩展的类型：`byte[]` 用它编码。
+   *
+   * ⚠️ 这是虎牙抓取曾经完全失效的根因 —— 标准 JCE 类型表只到 12，
+   * 而虎牙的 `WebSocketCommand.vData` / `WSPushMessage.sMsg` 都是 byte[]，
+   * 走的是 `writeBytes` = `head(tag,13)` + `head(0,INT8)` + 长度 + 原始字节。
+   * 读取器遇到未知类型即中断，于是真实帧一条都解不出来。
+   * （类型表取自虎牙页面自带的 `JceOutputStream`/`JceInputStream`，2026-09-17 核对）
+   */
+  SIMPLE_LIST: 13
 } as const
 
 export type JceValue =
   | { kind: 'int'; value: bigint }
+  | { kind: 'float'; value: number }
   | { kind: 'bytes'; value: Buffer }
   | { kind: 'struct'; fields: Map<number, JceValue> }
   | { kind: 'list'; items: JceValue[] }
+  | { kind: 'map'; entries: Array<{ key: JceValue; value: JceValue }> }
+
+/** MAP 条目数上限：真实协议里远小于此值，超过即视为坏帧（防止把垃圾当条目数陷进去） */
+const MAX_MAP_ENTRIES = 10_000
+
+/** 列表元素数上限：同上，避免坏帧里的巨额长度导致长时间空转 */
+const MAX_LIST_ITEMS = 100_000
 
 export interface JceHead {
   tag: number
@@ -57,7 +80,7 @@ function isFixed(type: number): number | null {
   }
 }
 
-class Reader {
+export class Reader {
   pos = 0
 
   constructor(
@@ -125,6 +148,53 @@ class Reader {
     return out
   }
 
+  /**
+   * 读一个「自身带头的整数」。
+   *
+   * Tars 的整数是**定长大端 + 类型降级**（`writeInt32` 在值落在 int16 范围时会改用
+   * INT16 编码，甚至用 ZERO_TAG 表示 0），所以长度/大小这类字段必须先读头再按类型取宽度。
+   */
+  readTaggedInt(): number | null {
+    const head = this.readHead()
+    if (!head) return null
+    const value = this.readInt(head.type)
+    if (value === null) return null
+    return Number(value)
+  }
+
+  /**
+   * SIMPLE_LIST：`head(tag,13)` + `head(0,INT8)` + 长度（自身带头的整数）+ 原始字节。
+   * 解出来直接当 `bytes` 用 —— 虎牙的 `vData` / `sMsg` 都是它。
+   */
+  readSimpleList(): Buffer | null {
+    const elem = this.readHead()
+    if (!elem || elem.type !== JCE.BYTE) return null
+    const len = this.readTaggedInt()
+    if (len === null || len < 0 || this.pos + len > this.end) return null
+    const out = this.buf.subarray(this.pos, this.pos + len)
+    this.pos += len
+    return out
+  }
+
+  /** MAP：`head(tag,8)` + 条目数 + (键头,键,值头,值) × 条目数 */
+  readMap(): Array<{ key: JceValue; value: JceValue }> | null {
+    const size = this.readTaggedInt()
+    if (size === null || size < 0 || size > MAX_MAP_ENTRIES) return null
+    const entries: Array<{ key: JceValue; value: JceValue }> = []
+    for (let i = 0; i < size; i += 1) {
+      const keyHead = this.readHead()
+      if (!keyHead) return null
+      const key = this.readValue(keyHead.type)
+      if (!key) return null
+      const valueHead = this.readHead()
+      if (!valueHead) return null
+      const value = this.readValue(valueHead.type)
+      if (!value) return null
+      entries.push({ key, value })
+    }
+    return entries
+  }
+
   skipValue(type: number): boolean {
     if (type === JCE.ZERO) return true
 
@@ -148,27 +218,50 @@ class Reader {
     }
 
     if (type === JCE.LIST) return this.readList() !== null
+    if (type === JCE.MAP) return this.readMap() !== null
+    if (type === JCE.SIMPLE_LIST) return this.readSimpleList() !== null
 
-    return false // MAP 等未支持类型
+    return false // 其余未知类型无法安全跳过
   }
 
-  /** 列表：逐个读「头 + 值」，遇到 STRUCT_END 或数据耗尽即结束 */
+  /**
+   * 列表：`head(tag,9)` + **长度（带头整数）** + 元素 × 长度。
+   *
+   * 每个元素自己带 head（虎牙的 `writeVector` 用 tag=0 写元素，见其实现原文：
+   * `writeTo(tag, EN_LIST); writeInt32(0, len); for(…) elem._write(this, 0, v[i])`）。
+   *
+   * ⚠️ 这里**不能**用「遇到 `tag=0 且 type=BYTE` 就当结束」的启发式：
+   * 长度字段 `writeInt32(0, 1)` 在值 ≤127 时恰好编码成 `00 01`，
+   * 会被那个启发式误判成结束标记，导致整条流错位
+   * （2026-09-17 实测：cmdType=22 的 vData 因此把频道名字段覆盖成整数 2561）。
+   */
   readList(): JceValue[] | null {
+    const size = this.readTaggedInt()
+    if (size === null || size < 0 || size > MAX_LIST_ITEMS) return null
     const items: JceValue[] = []
-    for (;;) {
+    for (let i = 0; i < size; i += 1) {
       const head = this.readHead()
-      if (!head) break
-      if (head.type === JCE.STRUCT_END) break
-      // Tars 列表以「tag=0 且 type=BYTE」的空头收尾（元素本身的 type 是 STRUCT_BEGIN）
-      if (head.tag === 0 && head.type === JCE.BYTE) break
+      if (!head) return null
       const value = this.readValue(head.type)
-      if (!value) break
+      if (!value) return null
       items.push(value)
     }
     return items
   }
 
   readValue(type: number): JceValue | null {
+    // 浮点数：虎牙协议里基本用不到，但**必须能安全跳过**。
+    // 否则 readInt 返回 null 且不移动游标 → readValue 也返回 null →
+    // readFields 误判为坏帧而提前收工，把后面所有字段一起丢掉
+    // （2026-09-17 实测：uri=6111 的 121 字节只解出前 3 个字段）。
+    if (type === JCE.FLOAT || type === JCE.DOUBLE) {
+      const size = isFixed(type)
+      if (size === null || this.pos + size > this.end) return null
+      const value = type === JCE.FLOAT ? this.buf.readFloatBE(this.pos) : this.buf.readDoubleBE(this.pos)
+      this.pos += size
+      return { kind: 'float', value }
+    }
+
     const asInt = this.readInt(type)
     if (asInt !== null) return { kind: 'int', value: asInt }
 
@@ -182,6 +275,17 @@ class Reader {
     if (type === JCE.LIST) {
       const items = this.readList()
       return items === null ? null : { kind: 'list', items }
+    }
+
+    // byte[]（虎牙的 vData / sMsg）——解出来就是 bytes，可直接 bufOf 取用
+    if (type === JCE.SIMPLE_LIST) {
+      const value = this.readSimpleList()
+      return value === null ? null : { kind: 'bytes', value }
+    }
+
+    if (type === JCE.MAP) {
+      const entries = this.readMap()
+      return entries === null ? null : { kind: 'map', entries }
     }
 
     return null
