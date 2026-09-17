@@ -13,6 +13,8 @@ const available = ref(true)
 const danmaku = ref<HistoryDanmaku[]>([])
 const replies = ref<HistoryReply[]>([])
 const limit = ref(100)
+const exporting = ref(false)
+const exportMsg = ref('')
 
 const PAGE = 50
 
@@ -35,6 +37,23 @@ function toMessage(r: HistoryDanmaku): DanmakuMessage {
     content: r.content,
     ts: r.ts,
     source: r.source
+  }
+}
+
+/** 导出当前过滤条件下的全部弹幕（CSV / JSON），保存对话框选路径 */
+async function exportAs(format: 'csv' | 'json'): Promise<void> {
+  if (exporting.value) return
+  exporting.value = true
+  exportMsg.value = ''
+  try {
+    const res = (await window.lda.exportDanmaku(
+      { roomId: roomId.value || undefined, keyword: keyword.value.trim() || undefined },
+      format
+    )) as { ok?: boolean; path?: string; count?: number; error?: string }
+    exportMsg.value =
+      res && res.ok ? `已导出 ${res.count} 条 → ${res.path}` : (res && res.error) || '导出失败'
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -98,7 +117,12 @@ onMounted(async () => {
       <button class="btn-cartoon" :disabled="loading" @click="search()">
         {{ loading ? '…' : '查询' }}
       </button>
+      <template v-if="kind === 'danmaku'">
+        <button class="btn-cartoon" :disabled="exporting" @click="exportAs('csv')">导出 CSV</button>
+        <button class="btn-cartoon" :disabled="exporting" @click="exportAs('json')">导出 JSON</button>
+      </template>
     </div>
+    <p v-if="exportMsg" class="hp-note">{{ exportMsg }}</p>
 
     <p v-if="!available" class="hp-note">
       历史库不可用：本地数据库文件打开失败，弹幕未落盘。可查看主进程日志确认原因。

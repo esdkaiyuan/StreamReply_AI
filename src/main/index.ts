@@ -69,7 +69,7 @@ app.whenReady().then(async () => {
   registerRoomIpc(win)
   registerAuthIpc(win)
   const db = await openDb()
-  registerHistoryIpc(() => db)
+  registerHistoryIpc(() => db, () => win)
   startReplyPipeline(win, loadSettings(), db)
   app.on('will-quit', () => db?.close())
   app.on('activate', () => {

@@ -55,6 +55,8 @@ const api = {
   onAiState: (cb: (s: AiState) => void) => subscribe(IPC.aiState, cb),
   queryDanmaku: (q: HistoryQuery = {}): Promise<HistoryResult<HistoryDanmaku>> =>
     ipcRenderer.invoke(IPC.historyDanmaku, q),
+  exportDanmaku: (q: HistoryQuery, format: 'csv' | 'json'): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.historyExport, q, format),
   queryReplies: (q: HistoryQuery = {}): Promise<HistoryResult<HistoryReply>> =>
     ipcRenderer.invoke(IPC.historyReplies, q),
   toggleAi: (): Promise<boolean> => ipcRenderer.invoke(IPC.aiToggle),

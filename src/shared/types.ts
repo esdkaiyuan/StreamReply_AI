@@ -72,6 +72,7 @@ export const IPC = {
   aiState: 'ai:state',
   manualSend: 'manual:send',
   historyDanmaku: 'history:danmaku',
+  historyExport: 'history:export',
   historyReplies: 'history:replies',
   authState: 'auth:state',
   authChanged: 'auth:changed',
@@ -266,6 +267,13 @@ export interface PlatformAccountSnapshot {
   uname?: string
   accounts: PlatformAccount[]
   activeId: string | null
+}
+
+export interface ExportResult {
+  ok: boolean
+  path?: string
+  count?: number
+  error?: string
 }
 
 export interface QrPollResult {

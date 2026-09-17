@@ -172,6 +172,39 @@ export class DbStore {
     }))
   }
 
+  /**
+   * 全量导出读取：按过滤条件分页循环读完全部记录（上限 maxRows 防失控）。
+   * 结果按时间**升序**返回（导出文件按发生顺序阅读）。
+   */
+  exportDanmakuRows(q: HistoryQuery = {}, maxRows = 200_000): HistoryDanmaku[] {
+    this.flush()
+    const out: HistoryDanmaku[] = []
+    const pageSize = 5000
+    for (let offset = 0; offset < maxRows; offset += pageSize) {
+      const { clause, args } = buildFilter(q, ['content', 'nickname'])
+      const stmt = this.db.prepare(
+        `SELECT id, platform, room_id, type, uid, nickname, content, source, ts
+         FROM danmaku ${clause} ORDER BY ts ASC LIMIT ? OFFSET ?`
+      )
+      const batch = stmt.all(...args, pageSize, offset) as unknown as RawDanmaku[]
+      out.push(
+        ...batch.map((r) => ({
+          id: r.id,
+          platform: r.platform as HistoryDanmaku['platform'],
+          roomId: r.room_id,
+          type: r.type as HistoryDanmaku['type'],
+          uid: r.uid,
+          nickname: r.nickname,
+          content: r.content,
+          source: r.source as HistoryDanmaku['source'],
+          ts: r.ts
+        }))
+      )
+      if (batch.length < pageSize) break
+    }
+    return out
+  }
+
   countDanmaku(): number {
     const row = this.db.prepare('SELECT COUNT(*) AS n FROM danmaku').get() as { n: number }
     return Number(row.n)
