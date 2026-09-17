@@ -27,6 +27,14 @@ export interface PlatformAdapter {
   normalizeInput?(input: string): Promise<string>
   /** 注入页面主世界的抓取脚本 */
   injectScript(): string
+  /**
+   * 进房间前的**预热地址**（可选）。
+   *
+   * 有些平台直接打开房间页会被服务端/前端判定为异常（302 到错误页），
+   * 需要先访问一次站点首页建立会话。虎牙实测：直接进房间页会被换掉，
+   * 先访首页再进房间即正常。
+   */
+  warmupUrl?(): string
   /** WS 长时间无数据时的 DOM 兜底脚本；平台未支持返回 null */
   domFallbackScript(): string | null
   /** 判断某个 WS 端点是否本平台的弹幕通道 */

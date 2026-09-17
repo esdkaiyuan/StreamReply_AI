@@ -1,5 +1,5 @@
 import type { CaptureSource, DanmakuMessage } from '../../../shared/types'
-import { HUYA_HOOK_SCRIPT } from '../../webview/inject/huyaHook'
+import { DOM_OBSERVER_SCRIPT } from '../../webview/inject/domObserver'
 import { buildHuyaSendScript } from '../../webview/inject/huyaSender'
 import type { FrameResult, PlatformAdapter } from '..'
 import { parseHuyaRoomId } from '../roomId'
@@ -13,20 +13,24 @@ export const huyaAdapter: PlatformAdapter = {
 
   parseRoomId: parseHuyaRoomId,
 
-  injectScript: () => HUYA_HOOK_SCRIPT,
+  /**
+   * **不注入任何脚本**（2026-09-18 决策）。
+   *
+   * 理由（不是「hook 会导致跳转」—— 那个假设已被实验推翻，移除 hook 后页面照样被跳）：
+   * 1. WS 侧的 uri=1400 弹幕只有 1~5 条/75 秒，价值远低于侵入页面的风险；
+   * 2. 弹幕主通道是页面已渲染的聊天列表 → DOM 兜底（不碰页面、不被检测）；
+   * 3. 虎牙对页面主世界改写敏感度未知，少动一处少一分风险。
+   *
+   * WUP/JCE 信封解析器（frame.ts / jce.ts）与 huyaHook 脚本作为协议层资产保留，随时可复用。
+   */
+  injectScript: () => '',
 
   /**
-   * 抓取走 CDP 网络事件。
-   *
-   * 依据 2026-09-17 实测：虎牙页面的弹幕连接是
-   * `wss://wsapi.huya.com/?baseinfo=...`（也见 `*-ws.va.huya.com`），
-   * 45 秒内抓到 477 帧。CDP 是浏览器进程级事件，不受「连接建在哪」影响，
-   * 也免去对页面 hook 的依赖。
+   * DOM 兜底：观察页面已渲染的聊天列表（#chat-room__list），
+   * 条目 innerText 为「昵称 : 内容」格式，由通用 DOM 观察器解析。
+   * 这是虎牙当前**主抓取通道**。
    */
-  captureViaCdp: true,
-
-  /** 虎牙弹幕列表 DOM 结构随版本变动，选择器需真实环境确认，暂不提供兜底 */
-  domFallbackScript: () => null,
+  domFallbackScript: () => DOM_OBSERVER_SCRIPT,
 
   /**
    * 虎牙 WS 端点判定。
@@ -37,6 +41,13 @@ export const huyaAdapter: PlatformAdapter = {
    * 注意：即使这里判错，CDP 通道仍会把帧上送、由 `parseFrame` 做内容校验，
    * 所以此正则只影响过滤效率，不影响能否抓到。
    */
+  /**
+   * ⚠️ 必须先访首页再进房间：直接打开 `https://www.huya.com/<room>` 会 302 到
+   * `error?errorType=ROOM_NOT_FOUND`（会话异常判定），而 curl 与「先首页后房间」均正常
+   * —— 2026-09-18 隔离实验结论。
+   */
+  warmupUrl: () => 'https://www.huya.com/',
+
   isDanmakuWs: (url) => /wsapi\.huya\.com|cdnws\.api\.huya\.com|-ws\.va\.huya\.com/i.test(url),
 
   parseFrame(raw: Buffer, roomId: string, source: CaptureSource): FrameResult {

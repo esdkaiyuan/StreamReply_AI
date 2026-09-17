@@ -116,6 +116,11 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
       sandbox: true
     }
   })
+  // Electron 默认 UA 带「Electron」字样，容易被平台识别为内嵌环境。
+  // 这里统一伪装成标准 Chrome（预防性措施：虎牙/快手等站点的反爬会看 UA）。
+  view.webContents.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+  )
   const session: RoomSession = {
     info: { roomId, platform, status: 'loading', addedAt: Date.now() },
     adapter,
@@ -139,6 +144,19 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
   // 默认静音：只有被 UI 指定为「当前画面」的房间才出声（见 setVideoTarget）
   view.webContents.setAudioMuted(true)
 
+  // 预热（仅配置了 warmupUrl 的平台）：部分站点直接打开房间页会被判定异常并 302 到错误页，
+  // 先访问一次首页建立会话即正常。放在所有抓取分支之前，失败也继续尝试进房间。
+  if (adapter.warmupUrl) {
+    console.log(`[wv] ${platform} 预热首页：${adapter.warmupUrl()}`)
+    try {
+      await view.webContents.loadURL(adapter.warmupUrl())
+      console.log(`[wv] ${platform} 预热完成`)
+    } catch (err) {
+      console.warn(`[wv] ${platform} 预热首页失败（继续进房间）：`, String(err))
+    }
+    if (rooms.get(roomId) !== session) return
+  }
+
   /** 房间仍在册时才改状态/推事件（防止已关闭房间的迟到回调污染 UI） */
   const alive = (): boolean => rooms.get(roomId) === session
 
@@ -146,13 +164,16 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
     clearTimeout(session.watchdog)
     session.watchdog = setTimeout(() => {
       if (session.gotWsMeta || session.domMode || session.direct) return
-      if (session.retryCount < 1) {
-        session.retryCount += 1
-        view.webContents.reload()
-        armWatchdog()
-      } else {
+      // ⚠️ 有 DOM 兜底的平台**不做 reload**：reload 会打断正在进行的页面加载
+      // （实测虎牙：房间页拿到 ERR_ABORTED 后页面被前端跳到错误页），
+      // 而这类平台的抓取本就不依赖 WS，直接进 DOM 兜底更稳。
+      if (adapter.domFallbackScript() || session.retryCount >= 1) {
         startDomFallback(session)
+        return
       }
+      session.retryCount += 1
+      view.webContents.reload()
+      armWatchdog()
     }, 8000)
   }
 
@@ -257,7 +278,24 @@ export async function openRoom(platform: Platform, roomId: string): Promise<void
 
   // ③ 兜底：页面注入 + DOM 观察（快手/斗鱼/虎牙当前走这条）
   armWatchdog()
-  await view.webContents.loadURL(adapter.roomUrl(roomId))
+  // 诊断：页面被前端改写成错误页 / 加载被中断时，这里能看到真实轨迹
+  view.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.warn(`[wv] 页面加载失败(${session.info.platform} ${roomId}) code=${code} ${desc} url=${String(url).slice(0, 90)}`)
+  })
+  view.webContents.on('did-redirect-navigation', (_e, url) => {
+    console.warn(`[wv] 页面被重定向(${session.info.platform} ${roomId}) -> ${String(url).slice(0, 90)}`)
+  })
+  view.webContents.on('did-navigate', (_e, url) => {
+    console.log(`[wv] 页面导航完成(${session.info.platform} ${roomId}) -> ${String(url).slice(0, 70)}`)
+  })
+  // ⚠️ 页面加载失败**不能判死房间**：看门狗会在 8 秒后 reload 一次来兜底，
+  // 这个 reload 会打断这里的 await（ERR_ABORTED）。抓取靠页面注入/DOM 观察，
+  // 与「这次导航是否被中断」无关 —— 与 CDP 分支同一处理原则。
+  try {
+    await view.webContents.loadURL(adapter.roomUrl(roomId))
+  } catch (err) {
+    console.warn(`[wv] ${platform} 房间页加载未完成（不影响抓取，仅影响发送）：`, String(err))
+  }
 }
 
 /**
@@ -322,6 +360,9 @@ function ensureIpcRoutes(): void {
     ipcMain.on(channel, (e, data: Uint8Array) => {
       const room = roomBySender(e.sender)
       if (!room || room.direct) return // 直连模式下页面帧一律不采信
+      // DOM 兜底已接管时同样丢弃页面 WS 帧：虎牙的 wsapi 补充源弹幕必然
+      // 已出现在页面聊天列表里，不丢弃会双源重复
+      if (room.domMode) return
       handleFrame(room, data, room.domMode ? 'dom' : 'ws')
     })
   }

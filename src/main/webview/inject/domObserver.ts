@@ -16,7 +16,7 @@ export const DOM_OBSERVER_SCRIPT = String.raw`
   var CAND_RE = /danmu|danmaku|barrage|chat|comment|message|reply/i
   var NAME_RE = /user-?name|username|nickname|uname|name/i
   var TEXT_RE = /text|content|message|danmu/i
-  var PREFER = ['.danmaku-item-container', '.chat-history-list']
+  var PREFER = ['#chat-room__list', '.chat-room__list', '.danmaku-item-container', '.chat-history-list']
 
   function findByPrefer() {
     for (var i = 0; i < PREFER.length; i++) {

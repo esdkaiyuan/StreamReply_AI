@@ -118,8 +118,22 @@ describe('虎牙弹幕消息映射（真实弹幕体）', () => {
 })
 
 describe('虎牙抓取通道与端点判定', () => {
-  it('虎牙走 CDP 抓帧', () => {
-    expect(huyaAdapter.captureViaCdp).toBe(true)
+  /**
+   * ⚠️ 虎牙的抓取通道已从「CDP 抓 WS」改为「DOM 兜底」（2026-09-18 实测结论）：
+   * WS 侧只有 1~5 条/75 秒的 uri=1400 弹幕，而页面聊天列表（#chat-room__list）
+   * 才是真实弹幕的载体。这里锁住这个决策，避免被误改回去。
+   */
+  it('虎牙不用 CDP 抓帧，改为 DOM 兜底', () => {
+    expect(huyaAdapter.captureViaCdp).toBeUndefined()
+    expect(huyaAdapter.domFallbackScript()).toBeTruthy()
+  })
+
+  it('虎牙不注入页面脚本（少碰页面，降低被检测风险）', () => {
+    expect(huyaAdapter.injectScript()).toBe('')
+  })
+
+  it('虎牙配置了进房前的首页预热', () => {
+    expect(huyaAdapter.warmupUrl?.()).toContain('huya.com')
   })
 
   it('识别实测到的弹幕 WS 主机', () => {
