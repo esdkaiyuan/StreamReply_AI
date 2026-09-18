@@ -47,7 +47,9 @@ export const PLATFORM_LOGIN: Record<Platform, {
     label: 'B站'
   },
   douyin: {
-    loginUrl: 'https://www.douyin.com/login',
+    // ⚠️ 不要用 /login：douyin.com/login 会被服务端重定向到 sso callback 错误页
+    // （实测「缺少参数 error_code:3」）。加载主站，用户点右上「登录」弹出登录框。
+    loginUrl: 'https://www.douyin.com/',
     domain: 'douyin.com',
     sessionCookies: ['sessionid', 'sessionid_ss'],
     label: '抖音'
