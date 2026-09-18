@@ -43,12 +43,17 @@ function unpackKey(key: string): { platform: Platform; token: string; sig: strin
   return { platform: key.slice(0, colon) as Platform, token: key.slice(colon + 1, pipe), sig: key.slice(pipe + 1) }
 }
 
-async function postForm(url: string, body: string, referer: string): Promise<{ status: number; json: any; setCookie: string[] }> {
+async function postForm(
+  url: string,
+  body: string,
+  referer: string,
+  origin?: string
+): Promise<{ status: number; json: any; setCookie: string[] }> {
   const res = await session.defaultSession.fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      Origin: `https://${new URL(url).hostname.replace(/^id\./, 'www.').replace(/^passport\./, 'www.')}`,
+      Origin: origin ?? `https://${new URL(url).hostname.replace(/^id\./, 'www.').replace(/^passport\./, 'www.')}`,
       Referer: referer,
       'User-Agent': UA
     },
@@ -107,7 +112,9 @@ async function dyGenerate(): Promise<PlatformQrResult> {
   const r = await postForm(
     'https://passport.douyu.com/scan/generateCode',
     'client_id=1&isMultiAccount=0',
-    'https://www.douyu.com/'
+    // ⚠️ 实测 Referer 必须是 passport 域的登录页（主站 referer 会被 error:1 拒绝）
+    'https://passport.douyu.com/index/login',
+    'https://passport.douyu.com'
   )
   const j = r.json
   if (r.status !== 200 || !j || j.error !== 0 || !j.data?.url) {
@@ -129,7 +136,10 @@ async function dyPoll(key: string): Promise<QrPollResult> {
   if (!k) return { phase: 'error', message: '轮询凭证损坏，请重新生成二维码' }
   const url = `https://passport.douyu.com/japi/scan/auth?time=${Date.now()}&code=${encodeURIComponent(k.token)}`
   const res = await session.defaultSession.fetch(url, {
-    headers: { Referer: 'https://www.douyu.com/', 'User-Agent': UA }
+    headers: {
+      Referer: 'https://passport.douyu.com/index/login',
+      'User-Agent': UA
+    }
   })
   const j = await res.json().catch(() => null)
   if (!j) return { phase: 'error', message: `网络异常（${res.status}）` }
