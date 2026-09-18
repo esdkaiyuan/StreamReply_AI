@@ -1,4 +1,3 @@
-import { session } from 'electron'
 import type { CaptureSource, DanmakuMessage } from '../../../shared/types'
 import { DOM_OBSERVER_SCRIPT } from '../../webview/inject/domObserver'
 import { buildHuyaSendScript } from '../../webview/inject/huyaSender'
@@ -43,19 +42,21 @@ export const huyaAdapter: PlatformAdapter = {
   isBlockedNavigation: (url) => /huya\.com\/error/i.test(url),
 
   /**
-   * ⚠️ 必须「清 Cookie → 访首页 → 进房间」三步走（2026-09-18 完整实验链结论）：
-   * 1. 残留 Cookie 会让服务端把房间页 302 到错误页 → 进房前 resetSession 清掉；
+   * ⚠️ 必须「会话重置 → 访首页 → 进房间」三步走（2026-09-18 完整实验链结论）：
+   * 1. 残留 Cookie 会让服务端把房间页 302 到错误页 → 进房前重置会话；
    * 2. 清完后首次进房没有游客身份，弹幕区不初始化（聊天列表只有系统消息）→
    *    先访一次首页让服务端下发游客 Cookie，再进房间弹幕组件即正常挂载。
+   *
+   * 重置策略按登录态分流（见 platformAuth.resetSessionPreserveLogin）：
+   * 已登录 → 清空后写回激活账号 Cookie（保住登录态，发送链路才可能通）；
+   * 未登录 → 清该平台域 Cookie（重新取游客身份）。旧实现无脑清会把登录态一起抹掉。
    */
   warmupUrl: () => 'https://www.huya.com/',
 
-  /** 清掉残留 Cookie：实测是房间页被 302 到错误页的直接原因（见接口注释） */
+  /** 进房前重置会话：登录态写回账号 Cookie，游客态清干净（避免残留 Cookie 触发 302） */
   resetSession: async () => {
-    await session.defaultSession.clearStorageData({
-      origin: 'https://www.huya.com',
-      storages: ['cookies']
-    })
+    const { resetSessionPreserveLogin } = await import('../../auth/platformAuth')
+    await resetSessionPreserveLogin('huya')
   },
 
   /**

@@ -151,7 +151,34 @@ export async function saveCurrentAccount(platform: Platform): Promise<PlatformAc
   return getAccountSnapshot(platform)
 }
 
-/** 把某账号的 Cookie 写回会话（切换账号） */
+/**
+ * 进房前的会话重置（虎牙等平台声明时使用，见 adapters/huya 的 resetSession）。
+ *
+ * 为什么不能像旧实现那样无脑清 Cookie：虎牙进房前清 huya.com Cookie 是规避
+ * 「房间页被 302 到错误页」的手段，但它同时抹掉了登录态 —— 于是虎牙永远停在
+ * 游客态、发送链路必然失败。这里按登录态分流：
+ * - 该平台有激活账号 → 清空后写回该账号保存的 Cookie：既拿到「干净」的登录会话
+ *   （避免历史混杂 Cookie 触发 302），又保住登录态；
+ * - 无激活账号（游客）→ 只清该平台域 Cookie，走原有的「重新获取游客身份」路径。
+ *
+ * 不触发 reloadAllRooms：它在 openRoom 进房前被调用，此时页面尚未加载。
+ */
+export async function resetSessionPreserveLogin(platform: Platform): Promise<void> {
+  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  if (!cfg) return
+  const data = readStore(platform)
+  const active = data.activeId ? data.list.find((a) => a.id === data.activeId) : null
+  if (active && active.cookies.length > 0) {
+    await applyAccountCookies(platform, active.cookies)
+    return
+  }
+  await sesFor(platform).clearStorageData({
+    origin: `https://www.${cfg.domain}`,
+    storages: ['cookies']
+  })
+}
+
+/** 把某账号的 Cookie 写回会话（切换账号 / 会话重置复用） */
 async function applyAccountCookies(
   platform: Platform,
   cookies: StoredAccount['cookies']
