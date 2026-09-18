@@ -16,6 +16,7 @@ const qrMessage = ref('')
 const cookieText = ref('')
 let qrKey = ''
 let qrTimer: ReturnType<typeof setInterval> | null = null
+let qrRefreshes = 0
 
 const PLATFORMS = [
   { key: 'bilibili', label: 'B站' },
@@ -46,34 +47,34 @@ async function refresh(): Promise<void> {
   snapshot.value = (await window.lda.getPlatformAccounts(ui.activePlatform)) as PlatformAccountSnapshot
 }
 
-/** 生成二维码：B 站应用内原生二维码；其它平台打开官方登录窗口（窗口里也有平台二维码） */
+/** 生成二维码：支持原生接口的平台应用内直出；否则打开官方登录窗口（窗口内扫码） */
 async function startQr(): Promise<void> {
   stopPolling()
   qrImage.value = ''
   qrPhase.value = 'waiting-scan'
   qrMessage.value = ''
-  if (ui.activePlatform !== 'bilibili') {
-    await openWindow()
-    return
-  }
-  const res = (await window.lda.startQrLogin('bilibili')) as {
+  const p = ui.activePlatform
+  const res = (await window.lda.startQrLogin(p)) as {
     ok?: boolean
     error?: string
     session?: { qrDataUrl: string; key: string; expiresAt: number }
   }
   if (!res || !res.ok || !res.session) {
-    qrPhase.value = 'error'
-    qrMessage.value = res?.error ?? '生成二维码失败'
+    // not-supported（如抖音/虎牙）→ 回落官方登录窗口
+    qrPhase.value = 'idle'
+    qrMessage.value = ''
+    await openWindow()
     return
   }
   qrImage.value = res.session.qrDataUrl
   qrKey = res.session.key
+  if (qrMessage.value.includes('自动刷新')) qrMessage.value = ''
   qrTimer = setInterval(pollQr, 2000)
 }
 
 async function pollQr(): Promise<void> {
   if (!qrKey) return
-  const res = (await window.lda.pollQrLogin(qrKey, 'bilibili')) as {
+  const res = (await window.lda.pollQrLogin(qrKey, ui.activePlatform)) as {
     phase?: string
     message?: string
     state?: PlatformAccountSnapshot
@@ -84,8 +85,18 @@ async function pollQr(): Promise<void> {
     stopPolling()
     snapshot.value = res.state ?? null
     qrImage.value = ''
-    notice.value = 'B 站登录成功，账号已保存'
-  } else if (res?.phase === 'expired' || res?.phase === 'error') {
+    notice.value = `${platformLabel.value} 登录成功，账号已保存`
+  } else if (res?.phase === 'expired') {
+    // 快手二维码有效期仅 ~1 分钟：自动刷新，用户无需手动重试
+    if (qrRefreshes < 3) {
+      qrRefreshes += 1
+      qrMessage.value = '二维码即将过期，已自动刷新'
+      await startQr()
+    } else {
+      stopPolling()
+      qrMessage.value = '二维码已多次过期，请手动重新生成'
+    }
+  } else if (res?.phase === 'error') {
     stopPolling()
   }
 }
@@ -132,12 +143,14 @@ async function doLogout(): Promise<void> {
 
 async function show(): Promise<void> {
   open.value = true
+  qrRefreshes = 0
   tab.value = 'qr'
   notice.value = ''
   await refresh()
 }
 
 function switchPlatform(key: string): void {
+  qrRefreshes = 0
   ui.setActivePlatform(key)
   stopPolling()
   qrImage.value = ''
@@ -229,7 +242,7 @@ function fmtTime(ts: number): string {
             <div class="qr">
               <img v-if="qrImage" :src="qrImage" alt="登录二维码" width="200" height="200" />
               <div v-else class="qr-ph">
-                {{ ui.activePlatform === 'bilibili' ? '二维码' : '官方窗口' }}
+                '二维码'
               </div>
             </div>
             <p class="hint">
@@ -243,7 +256,7 @@ function fmtTime(ts: number): string {
               }}
             </p>
             <button class="btn-cartoon" :disabled="busy" @click="startQr">
-              {{ ui.activePlatform === 'bilibili' ? (qrImage ? '重新生成二维码' : '生成二维码') : '打开登录窗口' }}
+              {{ qrImage ? '重新生成二维码' : ui.activePlatform === 'bilibili' ? '生成二维码' : '生成二维码' }}
             </button>
           </template>
 

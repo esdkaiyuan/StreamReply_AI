@@ -17,6 +17,7 @@ import {
   pollQrLogin as biliPollQrLogin,
   startQrLogin as biliStartQrLogin
 } from './bilibiliAuth'
+import { platformQrGenerate, platformQrPoll } from './platformQr'
 
 interface StoredAccount {
   id: string
@@ -160,14 +161,22 @@ export async function startPlatformQr(platform: Platform): Promise<{
       return { ok: false, error: String(err).replace(/^Error:\s*/, '') }
     }
   }
-  return { ok: false, error: '该平台请在官方登录窗口内扫码（点击「扫码登录」打开窗口）' }
+  // 快手 / 斗鱼：原生接口直出
+  return platformQrGenerate(platform)
 }
 
 export async function pollPlatformQr(
   platform: Platform,
   key: string
 ): Promise<{ phase: string; message?: string; state?: PlatformAccountSnapshot }> {
-  if (platform !== 'bilibili') return { phase: 'error', message: '该平台不支持应用内二维码轮询' }
+  if (platform !== 'bilibili') {
+    const res = await platformQrPoll(platform, key)
+    if (res.phase === 'confirmed') {
+      await saveCurrentAccount(platform).catch(() => undefined)
+      return { phase: 'confirmed', state: await getAccountSnapshot(platform) }
+    }
+    return { phase: res.phase, message: res.message }
+  }
   const res = await biliPollQrLogin(key)
   if (res.phase === 'confirmed') {
     await saveCurrentAccount(platform).catch(() => undefined)
