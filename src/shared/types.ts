@@ -265,6 +265,9 @@ export interface PlatformAccountSnapshot {
   platform: Platform
   isLogin: boolean
   uname?: string
+  uid?: string
+  /** 缺失的关键 Cookie（B 站 bili_jct）：能收弹幕但发不出去 */
+  missingCookies?: string[]
   accounts: PlatformAccount[]
   activeId: string | null
 }

@@ -199,7 +199,12 @@ function fmtTime(ts: number): string {
           <template v-if="snapshot?.isLogin">
             <p class="ok">
               已登录：<b>{{ snapshot.uname || '已登录' }}</b>
+              <span v-if="snapshot.uid" class="uid">uid {{ snapshot.uid }}</span>
               <button class="btn-cartoon sm" @click="doLogout">退出登录</button>
+            </p>
+            <p v-if="snapshot.missingCookies?.length" class="warn">
+              ⚠️ 缺少 <b>{{ snapshot.missingCookies.join('、') }}</b>：可正常收弹幕，但<b>发送会被拒绝</b>，
+              请重新扫码或用「打开登录窗口」补齐。
             </p>
             <p class="hint">当前会话即登录态：房间页可直接发送弹幕（游客态页面没有输入框）。</p>
           </template>
@@ -326,6 +331,7 @@ h3 { font-size: 15px; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
 p { font-size: 12.5px; line-height: 1.6; }
 .ok { color: #0a7d43; }
+.uid { opacity: 0.6; font-size: 11px; margin-left: 8px; }
 .warn { color: #a35a00; }
 .hint { opacity: 0.65; }
 .actions { display: flex; gap: 8px; }

@@ -130,12 +130,24 @@ function hasAny(list: StoredAccount['cookies'], names: string[]): string | null 
   return null
 }
 
-/** 从当前会话判定登录态并返回展示名（uid 优先，无则「已登录」） */
-async function currentLogin(platform: Platform): Promise<{ isLogin: boolean; uname?: string }> {
+/** 从当前会话判定登录态并返回展示名 / uid / 缺失 Cookie 提示 */
+interface CurrentLogin {
+  isLogin: boolean
+  uname?: string
+  uid?: string
+  missingCookies?: string[]
+}
+
+async function currentLogin(platform: Platform): Promise<CurrentLogin> {
   if (platform === 'bilibili') {
-    // B 站用 nav API 真实校验（Cookie 存在 ≠ 有效），顺带拿昵称
+    // B 站用 nav API 真实校验（Cookie 存在 ≠ 有效），顺带拿昵称与缺失 Cookie
     const st = await getBiliLoginState()
-    return st.isLogin ? { isLogin: true, uname: st.uname ?? 'B站用户' } : { isLogin: false }
+    return {
+      isLogin: st.isLogin,
+      uname: st.isLogin ? st.uname ?? 'B站用户' : undefined,
+      uid: st.isLogin && st.uid !== undefined ? String(st.uid) : undefined,
+      missingCookies: st.missingCookies
+    }
   }
   const cfg = cfgOf(platform)
   if (!cfg) return { isLogin: false }
@@ -144,7 +156,7 @@ async function currentLogin(platform: Platform): Promise<{ isLogin: boolean; una
   if (!uid) return { isLogin: false }
   // 昵称类 cookie（各平台不同，能拿到就展示）
   const nick = hasAny(list, ['acf_nickname', 'username', 'user_name'])
-  return { isLogin: true, uname: nick ? decodeURIComponent(nick) : `账号 ${uid.slice(0, 10)}` }
+  return { isLogin: true, uname: nick ? decodeURIComponent(nick) : `账号 ${uid.slice(0, 10)}`, uid: uid.slice(0, 16) }
 }
 
 /**
@@ -200,6 +212,8 @@ export async function getAccountSnapshot(platform: Platform): Promise<PlatformAc
     platform,
     isLogin: cur.isLogin,
     uname: cur.uname,
+    uid: cur.uid,
+    missingCookies: cur.missingCookies,
     accounts,
     activeId: data.activeId
   }
@@ -355,7 +369,10 @@ export async function platformCookieLogin(
   }
   const cur = await currentLogin(platform)
   if (!cur.isLogin) {
-    throw new Error(`Cookie 已写入但未见登录标识（缺 ${cfg.sessionCookies.join(' 或 ')}），请确认复制的是登录后的 Cookie`)
+    // 回滚：无效 Cookie 会被服务端在下一次校验时清除（如 B 站 nav 校验无效 SESSDATA
+    // 会下发删除指令），这里主动清掉半套残留，避免污染会话
+    await clearDomainCookies(cfg.domain)
+    throw new Error(`Cookie 已写入但未通过平台校验（缺 ${cfg.sessionCookies.join(' 或 ')} 或已失效），请确认复制的是登录后的 Cookie`)
   }
   return saveCurrentAccount(platform)
 }
