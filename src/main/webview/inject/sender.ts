@@ -15,6 +15,10 @@ function embedText(text: string): string {
  * 关键：必须区分两种失败，否则用户无法自助解决
  * - `need-login`：页面处于游客态（B 站不渲染输入框），需登录
  * - `no-input`：已登录但没找到输入框（改版或非直播间页）
+ *
+ * 返回 Promise（与其他四平台的 sendSimulator 确认模式对齐）：
+ * 点击发送后轮询「输入框是否被清空」——B 站发送成功会清空输入框，
+ * 清空即 resolve('sent')，超时 resolve('not-confirmed')，消除「返回 queued 即算成功」的假阳性。
  */
 export function buildSendScript(text: string): string {
   return String.raw`(function () {
@@ -109,16 +113,36 @@ export function buildSendScript(text: string): string {
     return null
   }
 
-  setTimeout(function () {
-    var btn = findButton()
-    try {
-      input.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
-      }))
-    } catch (e) {}
-    if (btn) { try { btn.click() } catch (e) {} }
-  }, 200 + Math.floor(Math.random() * 400))
+  // 确认模式：点击发送后轮询「输入框是否被清空」（B 站发送成功会清空），
+  // 清空或元素消失（部分改版发送后重建 DOM）即视为已发出；20 次 x 250ms ≈ 5 秒超时。
+  return new Promise(function (resolve) {
+    setTimeout(function () {
+      var btn = findButton()
+      try {
+        input.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
+        }))
+      } catch (e) {}
+      if (btn) { try { btn.click() } catch (e) {} }
 
-  return 'queued'
+      var tries = 0
+      var timer = setInterval(function () {
+        tries++
+        var val = ''
+        try {
+          val = input.isContentEditable ? String(input.textContent || '') : String(input.value || '')
+        } catch (e) { val = '' }
+        if (!document.contains(input) || val.indexOf(TEXT) < 0) {
+          clearInterval(timer)
+          resolve('sent')
+          return
+        }
+        if (tries >= 20) {
+          clearInterval(timer)
+          resolve('not-confirmed')
+        }
+      }, 250)
+    }, 200 + Math.floor(Math.random() * 400))
+  })
 })()`
 }

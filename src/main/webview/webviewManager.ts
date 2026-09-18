@@ -626,9 +626,9 @@ export async function sendText(roomId: string, text: string): Promise<SendResult
   try {
     // 平台侧发送前准备（B 站：补全 CSRF Cookie，缺它发送会被服务端 -111 拒掉）
     if (room.adapter.prepareSend) await room.adapter.prepareSend()
-    // 页面脚本可返回同步失败码，或返回 Promise（四平台真实确认发送，resolve 'sent'/'not-confirmed'）；
-    // executeJavaScript 会自动 await 返回的 Promise。B 站脚本仍同步返回 'queued'（本期未改造），
-    // 一并视为成功，避免打断已通的 B 站链路。
+    // 页面脚本可返回同步失败码，或返回 Promise（五平台统一确认发送：
+    // 点击后轮询输入框清空，resolve 'sent'/'not-confirmed'；executeJavaScript 自动 await）。
+    // 'queued' 仅作兼容保留（旧脚本形态），现所有适配器均已迁移到确认模式。
     const result = (await room.view.webContents.executeJavaScript(
       room.adapter.sendScript(text)
     )) as string
