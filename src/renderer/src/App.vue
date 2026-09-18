@@ -5,8 +5,8 @@ import DanmakuList from './components/DanmakuList.vue'
 import ReplyPanel from './components/ReplyPanel.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
-import LoginPanel from './components/LoginPanel.vue'
 import AccountPanel from './components/AccountPanel.vue'
+import { useUiStore } from './stores/ui'
 import VideoPanel from './components/VideoPanel.vue'
 import { useAiStore } from './stores/ai'
 import { useDanmakuStore } from './stores/danmaku'
@@ -15,9 +15,17 @@ import { useRoomStore } from './stores/rooms'
 const danmaku = useDanmakuStore()
 const rooms = useRoomStore()
 const ai = useAiStore()
+const uiStore = useUiStore()
 const rate = ref(0)
 const online = ref<number | undefined>(undefined)
 const feedTab = ref<'live' | 'history'>('live')
+const PLATFORMS = [
+  { key: 'bilibili', label: 'B站' },
+  { key: 'douyin', label: '抖音' },
+  { key: 'douyu', label: '斗鱼' },
+  { key: 'huya', label: '虎牙' },
+  { key: 'kuaishou', label: '快手' }
+] as const
 
 onMounted(() => {
   ai.init()
@@ -34,10 +42,16 @@ onMounted(() => {
   <div class="app-shell">
     <header class="glass-card topbar">
       <span class="logo">🎈 直播弹幕助手</span>
+      <select
+        class="input-cartoon platform-select"
+        :value="uiStore.activePlatform"
+        @change="uiStore.setActivePlatform(($event.target as HTMLSelectElement).value)"
+      >
+        <option v-for="p in PLATFORMS" :key="p.key" :value="p.key">{{ p.label }}账号</option>
+      </select>
       <span class="stat">⚡ {{ rate }}/分钟</span>
       <span class="stat">👥 {{ online ?? '--' }}</span>
       <div class="topbar__settings">
-        <LoginPanel />
         <AccountPanel />
         <SettingsDrawer />
       </div>
@@ -85,4 +99,5 @@ onMounted(() => {
 .feed-body { flex: 1; min-height: 0; }
 .reply { grid-area: reply; overflow: hidden; }
 .statusbar { grid-area: status; display: flex; align-items: center; padding: 0 12px; font-size: 12px; }
+.platform-select { width: auto; min-width: 96px; font-size: 12.5px; padding: 4px 8px; }
 </style>

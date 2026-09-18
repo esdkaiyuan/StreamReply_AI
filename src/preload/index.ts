@@ -62,9 +62,9 @@ const api = {
   toggleAi: (): Promise<boolean> => ipcRenderer.invoke(IPC.aiToggle),
   getLoginState: (): Promise<LoginState> => ipcRenderer.invoke(IPC.authState),
   onLoginChanged: (cb: (s: LoginState) => void) => subscribe(IPC.authChanged, cb),
-  startQrLogin: (): Promise<{ ok: true; session: QrSession } | { ok: false; error: string }> =>
-    ipcRenderer.invoke(IPC.authQrStart),
-  pollQrLogin: (key: string): Promise<QrPollResult> => ipcRenderer.invoke(IPC.authQrPoll, key),
+  startQrLogin: (platform?: string): Promise<unknown> => ipcRenderer.invoke(IPC.authQrStart, platform),
+  pollQrLogin: (key: string, platform?: string): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.authQrPoll, key, platform),
   loginWithCookie: (raw: string): Promise<LoginState & { error?: string }> =>
     ipcRenderer.invoke(IPC.authCookieSet, raw),
   openLoginWindow: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.authOpenLoginWindow),

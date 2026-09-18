@@ -11,6 +11,12 @@ import Store from 'electron-store'
 import { session } from 'electron'
 import type { Platform, PlatformAccount, PlatformAccountSnapshot } from '../../shared/types'
 import { reloadAllRooms } from '../webview/webviewManager'
+import {
+  ensureCsrfCookie,
+  getLoginState as getBiliLoginState,
+  pollQrLogin as biliPollQrLogin,
+  startQrLogin as biliStartQrLogin
+} from './bilibiliAuth'
 
 interface StoredAccount {
   id: string
@@ -30,10 +36,15 @@ const store = new Store<{ accounts?: Partial<Record<Platform, PlatformAccountSto
 })
 
 /** 各平台登录配置：登录页 / 会话归属域 / 判定登录成功的关键 Cookie */
-export const PLATFORM_LOGIN: Record<
-  Exclude<Platform, 'bilibili'>,
-  { loginUrl: string; domain: string; sessionCookies: string[]; label: string }
-> = {
+export const PLATFORM_LOGIN: Record<Platform, {
+  loginUrl: string; domain: string; sessionCookies: string[]; label: string
+}> = {
+  bilibili: {
+    loginUrl: 'https://passport.bilibili.com/login',
+    domain: 'bilibili.com',
+    sessionCookies: ['SESSDATA'],
+    label: 'B站'
+  },
   douyin: {
     loginUrl: 'https://www.douyin.com/login',
     domain: 'douyin.com',
@@ -53,7 +64,8 @@ export const PLATFORM_LOGIN: Record<
     label: '虎牙'
   },
   kuaishou: {
-    loginUrl: 'https://www.kuaishou.com/',
+    // www.kuaishou.com 会 302 到 /new-reco 的 JSON feed（非登录页）；用直播域，首页右上角「登录」点开即扫码框
+    loginUrl: 'https://live.kuaishou.com/',
     domain: 'kuaishou.com',
     sessionCookies: ['passToken', 'kuaishou.server.webday7_st'],
     label: '快手'
@@ -62,6 +74,28 @@ export const PLATFORM_LOGIN: Record<
 
 function sesFor(_platform: Platform): Electron.Session {
   return session.defaultSession
+}
+
+/** 平台配置（bilibili 也并入统一体系） */
+function cfgOf(platform: Platform): (typeof PLATFORM_LOGIN)[Platform] {
+  return PLATFORM_LOGIN[platform]
+}
+
+/**
+ * 逐条删除某域（含子域）的全部 Cookie。
+ * ⚠️ 不能用 clearStorageData({ origin })：它清不到子域 Cookie（如 api.bilibili.com
+ * 的 SESSDATA），而且 cookies.set 无法覆盖已存在的 HttpOnly Cookie —— 必须先删后写。
+ */
+async function clearDomainCookies(domain: string): Promise<void> {
+  const ses = session.defaultSession
+  const list = await ses.cookies.get({ domain })
+  await Promise.all(
+    list.map((c) =>
+      ses.cookies
+        .remove(`https://${c.domain?.replace(/^\./, '') ?? domain}${c.path ?? '/'}`, c.name)
+        .catch(() => undefined)
+    )
+  )
 }
 
 function readStore(platform: Platform): PlatformAccountStore {
@@ -77,7 +111,7 @@ function writeStore(platform: Platform, data: PlatformAccountStore): void {
 
 /** 该平台域下当前生效的 Cookie（导出用） */
 async function exportDomainCookies(platform: Platform): Promise<StoredAccount['cookies']> {
-  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  const cfg = cfgOf(platform)
   if (!cfg) return []
   const list = await sesFor(platform).cookies.get({ domain: cfg.domain })
   return list
@@ -95,7 +129,12 @@ function hasAny(list: StoredAccount['cookies'], names: string[]): string | null 
 
 /** 从当前会话判定登录态并返回展示名（uid 优先，无则「已登录」） */
 async function currentLogin(platform: Platform): Promise<{ isLogin: boolean; uname?: string }> {
-  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  if (platform === 'bilibili') {
+    // B 站用 nav API 真实校验（Cookie 存在 ≠ 有效），顺带拿昵称
+    const st = await getBiliLoginState()
+    return st.isLogin ? { isLogin: true, uname: st.uname ?? 'B站用户' } : { isLogin: false }
+  }
+  const cfg = cfgOf(platform)
   if (!cfg) return { isLogin: false }
   const list = await sesFor(platform).cookies.get({ domain: cfg.domain })
   const uid = hasAny(list, cfg.sessionCookies)
@@ -103,6 +142,38 @@ async function currentLogin(platform: Platform): Promise<{ isLogin: boolean; una
   // 昵称类 cookie（各平台不同，能拿到就展示）
   const nick = hasAny(list, ['acf_nickname', 'username', 'user_name'])
   return { isLogin: true, uname: nick ? decodeURIComponent(nick) : `账号 ${uid.slice(0, 10)}` }
+}
+
+/**
+ * 统一扫码入口：B 站有原生二维码接口（真扫码）；其余平台的二维码在
+ * 官方登录页里（用 openPlatformLoginWindow 打开），这里返回 not-supported。
+ */
+export async function startPlatformQr(platform: Platform): Promise<{
+  ok: boolean
+  session?: { qrDataUrl: string; key: string; expiresAt: number }
+  error?: string
+}> {
+  if (platform === 'bilibili') {
+    try {
+      return { ok: true, session: await biliStartQrLogin() }
+    } catch (err) {
+      return { ok: false, error: String(err).replace(/^Error:\s*/, '') }
+    }
+  }
+  return { ok: false, error: '该平台请在官方登录窗口内扫码（点击「扫码登录」打开窗口）' }
+}
+
+export async function pollPlatformQr(
+  platform: Platform,
+  key: string
+): Promise<{ phase: string; message?: string; state?: PlatformAccountSnapshot }> {
+  if (platform !== 'bilibili') return { phase: 'error', message: '该平台不支持应用内二维码轮询' }
+  const res = await biliPollQrLogin(key)
+  if (res.phase === 'confirmed') {
+    await saveCurrentAccount(platform).catch(() => undefined)
+    return { phase: 'confirmed', state: await getAccountSnapshot(platform) }
+  }
+  return { phase: res.phase, message: res.message }
 }
 
 /** 快照：登录态 + 账号列表 + 激活 id */
@@ -125,7 +196,7 @@ export async function getAccountSnapshot(platform: Platform): Promise<PlatformAc
 
 /** 把当前会话的登录态保存为一个账号并激活（登录成功后调用） */
 export async function saveCurrentAccount(platform: Platform): Promise<PlatformAccountSnapshot> {
-  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  const cfg = cfgOf(platform)
   if (!cfg) throw new Error(`平台 ${platform} 不支持账号管理`)
   const cookies = await exportDomainCookies(platform)
   const uid = hasAny(cookies, cfg.sessionCookies)
@@ -164,7 +235,7 @@ export async function saveCurrentAccount(platform: Platform): Promise<PlatformAc
  * 不触发 reloadAllRooms：它在 openRoom 进房前被调用，此时页面尚未加载。
  */
 export async function resetSessionPreserveLogin(platform: Platform): Promise<void> {
-  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  const cfg = cfgOf(platform)
   if (!cfg) return
   const data = readStore(platform)
   const active = data.activeId ? data.list.find((a) => a.id === data.activeId) : null
@@ -183,7 +254,7 @@ async function applyAccountCookies(
   platform: Platform,
   cookies: StoredAccount['cookies']
 ): Promise<void> {
-  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  const cfg = cfgOf(platform)
   const ses = sesFor(platform)
   // 先清该平台域的现有 cookie，避免两账号字段混杂
   await ses.clearStorageData({ origin: `https://www.${cfg.domain}`, storages: ['cookies'] })
@@ -209,6 +280,7 @@ export async function switchAccount(platform: Platform, id: string): Promise<Pla
   await applyAccountCookies(platform, target.cookies)
   data.activeId = id
   writeStore(platform, data)
+  if (platform === 'bilibili') await ensureCsrfCookie().catch(() => undefined) // 补 bili_jct，否则发弹幕 -111
   reloadAllRooms()
   return getAccountSnapshot(platform)
 }
@@ -223,8 +295,7 @@ export async function removeAccount(platform: Platform, id: string): Promise<Pla
       const first = data.list[0]
       await applyAccountCookies(platform, first.cookies)
     } else {
-      const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
-      await sesFor(platform).clearStorageData({ origin: `https://www.${cfg.domain}`, storages: ['cookies'] })
+      await clearDomainCookies(cfgOf(platform).domain)
     }
   }
   writeStore(platform, data)
@@ -234,9 +305,8 @@ export async function removeAccount(platform: Platform, id: string): Promise<Pla
 
 /** 退出当前登录（清会话 + 取消激活；账号记录保留，可随时切换回来） */
 export async function platformLogout(platform: Platform): Promise<PlatformAccountSnapshot> {
-  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
-  if (cfg) {
-    await sesFor(platform).clearStorageData({ origin: `https://www.${cfg.domain}`, storages: ['cookies'] })
+  if (platform in PLATFORM_LOGIN) {
+    await clearDomainCookies(PLATFORM_LOGIN[platform].domain)
   }
   const data = readStore(platform)
   data.activeId = null
@@ -260,7 +330,7 @@ export async function platformCookieLogin(
     })
     .filter((x): x is { name: string; value: string } => !!x)
   if (!pairs.length) throw new Error('未能解析出任何 Cookie，请检查格式（name=value; ...）')
-  const cfg = PLATFORM_LOGIN[platform as Exclude<Platform, 'bilibili'>]
+  const cfg = cfgOf(platform)
   const ses = sesFor(platform)
   for (const c of pairs) {
     await ses.cookies.set({

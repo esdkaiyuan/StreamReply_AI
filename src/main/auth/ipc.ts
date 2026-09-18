@@ -11,6 +11,7 @@ import {
   switchAccount
 } from './platformAuth'
 import { openPlatformLoginWindow } from './platformLogin'
+import { pollPlatformQr, startPlatformQr } from './platformAuth'
 import {
   getLoginState as getBiliLoginState,
   loginWithCookie as biliLoginWithCookie,
@@ -20,9 +21,9 @@ import {
   startQrLogin
 } from './bilibiliAuth'
 
-/** 非 B 站平台走多平台账号体系；B 站保持原路径（已有完整实现与 UI） */
-function isMultiPlatform(p: string): p is Exclude<Platform, 'bilibili'> {
-  return p === 'douyin' || p === 'douyu' || p === 'huya' || p === 'kuaishou'
+/** 五平台统一走多平台账号体系（bilibili 也并入） */
+function isSupportedPlatform(p: string): p is Platform {
+  return p === 'bilibili' || p === 'douyin' || p === 'douyu' || p === 'huya' || p === 'kuaishou'
 }
 
 /**
@@ -42,18 +43,18 @@ export function registerAuthIpc(win: BrowserWindow): void {
 
   // ---- 多平台账号体系 ----
   ipcMain.handle(IPC.authPlatformState, (_e, platform: string) =>
-    isMultiPlatform(platform) ? getAccountSnapshot(platform) : getBiliLoginState()
+    isSupportedPlatform(platform) ? getAccountSnapshot(platform) : getBiliLoginState()
   )
 
   ipcMain.handle(IPC.authPlatformLoginWindow, (_e, platform: string) => {
-    if (!isMultiPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
+    if (!isSupportedPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
     return openPlatformLoginWindow(platform, (p) => {
       void broadcastPlatform(p)
     })
   })
 
   ipcMain.handle(IPC.authPlatformCookieSet, async (_e, platform: string, raw: string) => {
-    if (!isMultiPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
+    if (!isSupportedPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
     try {
       const snap = await platformCookieLogin(platform, raw)
       reloadAllRooms()
@@ -65,7 +66,7 @@ export function registerAuthIpc(win: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.authPlatformSwitch, async (_e, platform: string, id: string) => {
-    if (!isMultiPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
+    if (!isSupportedPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
     try {
       const snap = await switchAccount(platform, id)
       await broadcastPlatform(platform)
@@ -76,7 +77,7 @@ export function registerAuthIpc(win: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.authPlatformRemove, async (_e, platform: string, id: string) => {
-    if (!isMultiPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
+    if (!isSupportedPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
     try {
       const snap = await removeAccount(platform, id)
       await broadcastPlatform(platform)
@@ -87,7 +88,7 @@ export function registerAuthIpc(win: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.authPlatformLogout, async (_e, platform: string) => {
-    if (!isMultiPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
+    if (!isSupportedPlatform(platform)) return { ok: false, error: `平台 ${platform} 暂不支持` }
     try {
       const snap = await platformLogout(platform)
       reloadAllRooms()
@@ -98,19 +99,18 @@ export function registerAuthIpc(win: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle(IPC.authQrStart, async () => {
-    try {
-      return { ok: true as const, session: await startQrLogin() }
-    } catch (err) {
-      return { ok: false as const, error: String(err) }
-    }
+  ipcMain.handle(IPC.authQrStart, async (_e, platform?: string) => {
+    const p = platform && isSupportedPlatform(platform) ? platform : 'bilibili'
+    return startPlatformQr(p)
   })
 
-  ipcMain.handle(IPC.authQrPoll, async (_e, key: string) => {
-    const result = await pollQrLogin(key)
+  ipcMain.handle(IPC.authQrPoll, async (_e, key: string, platform?: string) => {
+    const p = platform && isSupportedPlatform(platform) ? platform : 'bilibili'
+    const result = await pollPlatformQr(p, key)
     if (result.phase === 'confirmed') {
       reloadAllRooms()
       await broadcast()
+      await broadcastPlatform(p)
     }
     return result
   })
