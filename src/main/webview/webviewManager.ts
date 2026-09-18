@@ -610,7 +610,9 @@ const SEND_FAIL_REASON: Record<string, string> = {
   'no-input': '未找到弹幕输入框（可能是非直播间页面，或该房间不支持发言）',
   'no-setter': '找到输入框但类型不受支持，无法写入文本',
   'set-failed': '文本没有真正写进输入框（富文本编辑器拦截或页面改版），已放弃发送',
-  'send-failed': '已填入文本但未找到发送按钮'
+  'send-failed': '已填入文本但未找到发送按钮',
+  'not-confirmed':
+    '已提交但页面未确认弹幕发出（可能被平台拦截、频控，或发送后输入框未清空）—— 请在直播间页面核对是否真的发出'
 }
 
 /** 向指定房间发送弹幕；失败时给出可读原因（触发调度器熔断计数） */
@@ -624,10 +626,13 @@ export async function sendText(roomId: string, text: string): Promise<SendResult
   try {
     // 平台侧发送前准备（B 站：补全 CSRF Cookie，缺它发送会被服务端 -111 拒掉）
     if (room.adapter.prepareSend) await room.adapter.prepareSend()
+    // 页面脚本可返回同步失败码，或返回 Promise（四平台真实确认发送，resolve 'sent'/'not-confirmed'）；
+    // executeJavaScript 会自动 await 返回的 Promise。B 站脚本仍同步返回 'queued'（本期未改造），
+    // 一并视为成功，避免打断已通的 B 站链路。
     const result = (await room.view.webContents.executeJavaScript(
       room.adapter.sendScript(text)
     )) as string
-    if (result === 'queued') return { ok: true }
+    if (result === 'sent' || result === 'queued') return { ok: true }
     return { ok: false, reason: SEND_FAIL_REASON[result] ?? `发送脚本返回未知结果：${result}` }
   } catch (err) {
     console.error('[wv] sendText failed', err)
