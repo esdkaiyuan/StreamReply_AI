@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import type { Platform } from '../../../shared/types'
+import { computed, onMounted, ref, watch } from 'vue'
+import type { Platform, PlatformAccountSnapshot } from '../../../shared/types'
 import { useRoomStore } from '../stores/rooms'
 
 const store = useRoomStore()
@@ -20,6 +20,21 @@ const PLATFORM_LABEL: Record<string, string> = {
   bilibili: 'B站', douyin: '抖音', kuaishou: '快手', douyu: '斗鱼', huya: '虎牙'
 }
 
+/**
+ * 虎牙游客态没有聊天身份：弹幕区不初始化（列表只有系统公告）、无输入框。
+ * 实测（2026-09-19）：登录虎牙后弹幕区才会挂载。这里有虎牙房间且未登录时给出明确引导。
+ */
+const huyaSnap = ref<PlatformAccountSnapshot | null>(null)
+async function refreshHuyaLogin(): Promise<void> {
+  try {
+    huyaSnap.value = (await window.lda.getPlatformAccounts('huya')) as PlatformAccountSnapshot
+  } catch {
+    /* 忽略 */
+  }
+}
+const huyaRoomExists = computed(() => store.rooms.some((r) => r.platform === 'huya'))
+const huyaNeedLogin = computed(() => huyaRoomExists.value && huyaSnap.value?.isLogin === false)
+
 const PLATFORMS: Array<{ value: Platform | 'auto'; label: string }> = [
   { value: 'auto', label: '自动识别' },
   { value: 'bilibili', label: 'B站' },
@@ -38,7 +53,12 @@ async function add(): Promise<void> {
 
 onMounted(() => {
   void store.refresh()
+  void refreshHuyaLogin()
   window.lda.onRoomStatus((r) => store.applyStatus(r))
+})
+
+watch(huyaRoomExists, (v) => {
+  if (v) void refreshHuyaLogin()
 })
 </script>
 
@@ -57,6 +77,9 @@ onMounted(() => {
       <button class="btn-cartoon" @click="add">添加</button>
       <p v-if="error" class="room-error">{{ error }}</p>
     </div>
+    <p v-if="huyaNeedLogin" class="room-tip">
+      💡 虎牙游客态收不到弹幕：请点顶栏「👤 账号信息」登录虎牙后重新添加房间
+    </p>
     <ul class="room-list">
       <li v-for="r in store.rooms" :key="r.roomId" class="room-row">
         <span class="room-dot" :style="{ background: STATUS_DOT[r.status] }" />
@@ -84,6 +107,11 @@ onMounted(() => {
 .room-dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--ink); flex: none; }
 .room-id { font-weight: 700; font-size: 13px; }
 .room-status { font-size: 11px; opacity: 0.7; margin-left: auto; }
+.room-tip {
+  font-size: 12px; line-height: 1.6; color: #a35a00;
+  background: rgba(255, 167, 66, 0.12); border: 1.5px dashed rgba(240, 167, 66, 0.6);
+  border-radius: var(--radius-sm); padding: 6px 10px; margin: 6px 2px 0;
+}
 .room-count { color: #0a7d43; font-weight: 700; }
 .room-remove { border: none; background: none; font-size: 16px; cursor: pointer; color: #e05656; }
 </style>
