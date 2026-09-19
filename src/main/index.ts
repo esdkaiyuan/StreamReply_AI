@@ -5,6 +5,7 @@ import { loadSettings } from './settings'
 import { startReplyPipeline, rebindReplyWindow } from './ai/pipeline'
 import type { DbStore } from './db/store'
 import { registerHistoryIpc } from './db/historyIpc'
+import { setDbProbe } from './webview/webviewManager'
 import { registerAuthIpc } from './auth/ipc'
 import { setupUserData } from './userData'
 
@@ -69,6 +70,14 @@ app.whenReady().then(async () => {
   registerRoomIpc(win)
   registerAuthIpc(win)
   const db = await openDb()
+  setDbProbe(() => {
+    try {
+      if (!db) return { available: false, total: 0 }
+      return { available: true, total: db.countDanmaku() }
+    } catch {
+      return { available: false, total: 0 }
+    }
+  })
   registerHistoryIpc(() => db, () => win)
   startReplyPipeline(win, loadSettings(), db)
   app.on('will-quit', () => db?.close())

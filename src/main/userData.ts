@@ -24,6 +24,13 @@ const MARKER = '.cookie-migrated'
  * 必须在任何 userData 访问（electron-store、session、db）之前调用。
  */
 export function setupUserData(): void {
+  // LDA_USER_DATA：隔离测试用临时目录（冒烟/多实例验证时不打扰正在运行的正式实例）
+  const override = process.env.LDA_USER_DATA
+  if (override) {
+    app.setPath('userData', override)
+    console.log('[userData] 使用隔离目录（LDA_USER_DATA）：', override)
+    return
+  }
   app.setPath('userData', join(app.getPath('appData'), APP_DIR))
   migrateLegacyCookies()
 }

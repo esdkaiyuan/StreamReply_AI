@@ -32,6 +32,12 @@ export interface RoomStatEvent {
   danmakuRate: number
   /** 该房间累计收到的弹幕条数（用于自查抓取是否在工作） */
   danmakuCount?: number
+  /** 该房间的真实抓取通道描述（由适配器能力推导，非写死文案） */
+  captureChannel?: string
+  /** 本地 SQLite 落盘是否可用（真实探测，不挂靠 AI 状态） */
+  dbAvailable?: boolean
+  /** 库内弹幕总条数（COUNT(*)，真实值） */
+  dbTotalCount?: number
   ts: number
 }
 

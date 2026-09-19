@@ -4,6 +4,8 @@ import type { DanmakuMessage, Platform } from '../../shared/types'
 import { openRoom, closeRoom, listRooms, bindMainWindow } from '../webview/webviewManager'
 import { detectPlatform, getAdapter } from '../adapters'
 import { bus } from '../webview/bus'
+import { describeChannel } from '../adapters'
+import { getDbState } from '../webview/webviewManager'
 
 /** 当前绑定的主窗口；activate 重建窗口后经 rebindRoomWindow 更新 */
 let boundWin: BrowserWindow | null = null
@@ -28,10 +30,17 @@ export function registerRoomIpc(win: BrowserWindow): void {
   setInterval(() => {
     for (const room of listRooms()) {
       if (room.status === 'closed') continue
+      // 与 webviewManager.emitStat 同构：真实通道 + 真实落盘状态（状态栏数据必须为真）
+      const adapter = getAdapter(room.platform)
+      const dbState = getDbState()
       push(IPC.roomStat, {
         platform: room.platform,
         roomId: room.roomId,
         danmakuRate: bus.rate60s(),
+        danmakuCount: bus.countOf(room.roomId),
+        captureChannel: adapter ? describeChannel(adapter) : undefined,
+        dbAvailable: dbState.available,
+        dbTotalCount: dbState.total,
         ts: Date.now()
       })
     }

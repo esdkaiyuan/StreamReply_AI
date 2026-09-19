@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import RoomPanel from './components/RoomPanel.vue'
 import DanmakuList from './components/DanmakuList.vue'
 import ReplyPanel from './components/ReplyPanel.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
 import AccountPanel from './components/AccountPanel.vue'
+import type { RoomStatEvent } from '../../shared/types'
 import { useUiStore } from './stores/ui'
 import VideoPanel from './components/VideoPanel.vue'
 import { useAiStore } from './stores/ai'
@@ -19,6 +20,7 @@ const uiStore = useUiStore()
 const rate = ref(0)
 const online = ref<number | undefined>(undefined)
 const feedTab = ref<'live' | 'history'>('live')
+const lastStat = ref<RoomStatEvent | null>(null)
 const PLATFORMS = [
   { key: 'bilibili', label: 'B站' },
   { key: 'douyin', label: '抖音' },
@@ -27,6 +29,21 @@ const PLATFORMS = [
   { key: 'kuaishou', label: '快手' }
 ] as const
 
+const totalDanmaku = computed(() =>
+  Object.values(rooms.counts).reduce((a, b) => a + b, 0)
+)
+/** 各房间抓取通道去重（真实通道来自主进程按适配器能力推导） */
+const channelText = computed(() => {
+  const chans = [...new Set(rooms.rooms.map((r) => r.roomId).map((id) => lastStatByRoom.value[id]).filter(Boolean))]
+  return chans.length ? chans.join(' / ') : '--'
+})
+const lastStatByRoom = ref<Record<string, string>>({})
+const dbText = computed(() => {
+  const s = lastStat.value
+  if (!s || s.dbAvailable === undefined) return '历史落盘：--'
+  return s.dbAvailable ? `历史落盘：开 · 库内 ${s.dbTotalCount ?? 0} 条` : '历史落盘：不可用'
+})
+
 onMounted(() => {
   ai.init()
   window.lda.onDanmaku((m) => danmaku.push(m))
@@ -34,6 +51,8 @@ onMounted(() => {
     rate.value = s.danmakuRate
     if (s.onlineCount) online.value = s.onlineCount
     if (s.danmakuCount !== undefined) rooms.setCount(s.roomId, s.danmakuCount)
+    if (s.captureChannel) lastStatByRoom.value = { ...lastStatByRoom.value, [s.roomId]: s.captureChannel }
+    lastStat.value = s
   })
 })
 </script>
@@ -70,8 +89,8 @@ onMounted(() => {
     </main>
     <section class="glass-card reply"><ReplyPanel /></section>
     <footer class="glass-card statusbar">
-      房间数 {{ rooms.rooms.length }} ｜ 弹幕 {{ danmaku.items.length }} 条 ｜
-      {{ ai.state?.dbAvailable ? '历史落盘：开' : '历史落盘：不可用' }} ｜ 抓取：B站主进程直连
+      房间数 {{ rooms.rooms.length }} ｜ 累计弹幕 {{ totalDanmaku }} 条 ｜
+      {{ dbText }} ｜ 抓取：{{ channelText }}
     </footer>
   </div>
 </template>

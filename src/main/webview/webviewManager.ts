@@ -4,6 +4,8 @@ import type { CaptureSource, Platform, RoomInfo, RoomStatus, SendResult } from '
 import { FRAME_CHANNELS, IPC } from '../../shared/types'
 import { getAdapter, type DirectClient, type DirectHooks, type PlatformAdapter } from '../adapters'
 import { bus } from './bus'
+import { describeChannel } from '../adapters'
+import type { RoomStatEvent } from '../../shared/types'
 import { createCdpCapture, type CdpCapture } from './cdpCapture'
 import { CLEAR_VIDEO_MODE_SCRIPT, PLAYER_FRAME_RE, VIDEO_MODE_SCRIPT } from './inject/videoMode'
 
@@ -63,11 +65,45 @@ function armFrameWatchdog(room: RoomSession, delayMs = 10_000): void {
   }, delayMs)
 }
 
-function emitStat(room: RoomSession, onlineCount: number): void {
-  mainWindow?.webContents.send(
-    IPC.roomStat,
-    bus.buildStat(room.info.platform, room.info.roomId, onlineCount)
-  )
+/**
+ * DB 状态探针由 index.ts 注入（webviewManager 不直接依赖 db 模块，避免循环依赖）。
+ * 返回真实的落盘可用性与库内条数；COUNT 查询失败按不可用处理。
+ */
+let dbProbe: (() => { available: boolean; total: number }) | null = null
+export function setDbProbe(fn: () => { available: boolean; total: number }): void {
+  dbProbe = fn
+}
+
+/** 供其它模块（rooms/ipc 周期统计）读取真实落盘状态 */
+export function getDbState(): { available: boolean; total: number } {
+  try {
+    return dbProbe?.() ?? { available: false, total: 0 }
+  } catch {
+    return { available: false, total: 0 }
+  }
+}
+
+const lastStatAt = new Map<string, number>()
+
+/** 有在线人数立即推；仅有弹幕（DOM 兜底平台无人气包）时按 10 秒节流推送，保证状态栏数据持续为真 */
+function maybeEmitStat(room: RoomSession, onlineCount?: number): void {
+  if (onlineCount === undefined) {
+    const last = lastStatAt.get(room.info.roomId) ?? 0
+    if (Date.now() - last < 10_000) return
+  }
+  lastStatAt.set(room.info.roomId, Date.now())
+  emitStat(room, onlineCount)
+}
+
+function emitStat(room: RoomSession, onlineCount?: number): void {
+  const stat = bus.buildStat(room.info.platform, room.info.roomId, onlineCount) as RoomStatEvent
+  // 真实抓取通道：由适配器能力推导（不写死文案）
+  stat.captureChannel = describeChannel(room.adapter)
+  // 真实落盘状态：独立探测，与 AI 状态解耦
+  const probe = dbProbe?.()
+  stat.dbAvailable = probe ? probe.available : undefined
+  stat.dbTotalCount = probe?.total
+  mainWindow?.webContents.send(IPC.roomStat, stat)
 }
 
 function handleFrame(room: RoomSession, data: Uint8Array, source: CaptureSource): number {
@@ -81,6 +117,7 @@ function handleFrame(room: RoomSession, data: Uint8Array, source: CaptureSource)
   if (result.danmaku.length === 0 && result.onlineCount === undefined) return 0
   markCaptured(room)
   for (const msg of result.danmaku) bus.publish(msg)
+  maybeEmitStat(room, result.onlineCount)
   if (result.onlineCount !== undefined) {
     emitStat(room, result.onlineCount)
     return result.danmaku.length + 1
@@ -98,6 +135,7 @@ function startDomFallback(room: RoomSession): void {
     return
   }
   room.domMode = true
+  maybeEmitStat(room) // 立即推一次：状态栏的通道/落盘状态不必等第一帧
   // 注入成功≠容器就绪：'fallback-dom' 由 dom-ready 信号（容器真正找到并开始观察）置位
   void room.view.webContents.executeJavaScript(script).catch((err) => {
     console.error('[wv] dom fallback inject failed', err)

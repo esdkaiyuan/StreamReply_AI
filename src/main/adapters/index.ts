@@ -118,3 +118,11 @@ export function detectPlatform(input: string): Platform | null {
   if (t.includes('bilibili.com') || t.includes('b23.tv')) return 'bilibili'
   return null
 }
+
+/** 由适配器能力推导真实抓取通道描述（状态栏显示用，不写死文案） */
+export function describeChannel(adapter: PlatformAdapter): string {
+  if (adapter.createDirectCapture) return '主进程直连'
+  if (adapter.captureViaCdp) return 'CDP 抓帧'
+  if (adapter.domFallbackScript()) return '页面注入 + DOM 兜底'
+  return '页面注入'
+}
